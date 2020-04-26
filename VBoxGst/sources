@@ -1,0 +1,13 @@
+TARGETNAME=VBoxGst
+TARGETPATH=obj
+TARGETTYPE=DRIVER
+DRIVERTYPE=WDM
+
+C_DEFINES=-DDRIVER
+
+SOURCES= \
+        VBoxGst.c \
+        DebugPrint.c
+
+LIB=$(DDKROOT)\lib
+INCLUDE=$(DDKROOT)\inc\ddk;$(MSVCDIR)\include

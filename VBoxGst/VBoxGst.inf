@@ -1,0 +1,43 @@
+
+[Version]
+Signature=$CHICAGO$
+Class=System
+Provider=%String0%
+
+[ClassInstall]
+
+[DestinationDirs]
+DefaultDestDir=10,SYSTEM32\DRIVERS
+
+[Manufacturer]
+%String0%=VBoxGuest
+
+[VBoxGuest]
+%String1%=VBoxGuest_Install,PCI\VEN_80ee&DEV_cafe
+
+[VBoxGuest_Install]
+CopyFiles=VBoxGuest_CopyFiles
+AddReg=VBoxGuest_AddReg
+
+[VBoxGuest_CopyFiles]
+VBoxGst.sys
+
+[VBoxGuest_AddReg]
+HKR,,DevLoader,,*ntkern
+HKR,,NTMPDriver,,VBoxGst.sys
+
+[ControlFlags]
+
+[ClassInstall32]
+; This should fix the error 0xe0000101 (The required section was not found in the INF).
+
+[SourceDisksNames]
+1=%VBoxGuest.MediaDesc%,,
+
+[SourceDisksFiles]
+VBoxGst.sys=1
+
+[Strings]
+String0="Oracle Corporation"
+String1="VirtualBox Guest Device"
+VBoxGuest.MediaDesc="VirtualBox Guest Driver Installation Disk"

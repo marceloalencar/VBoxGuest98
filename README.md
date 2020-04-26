@@ -1,19 +1,21 @@
 # VBoxGuest98
-VirtualBox Guest Additions backport for Microsoft Windows 98, using Windows Driver Model 1.0.
+VirtualBox Guest Additions backport for Microsoft Windows 98, using Windows Driver Model 1.0. Tracks VirtualBox 6.1.4 source code.
 
 ## Components
 **VBoxGst**: PCI driver for VirtualBox Guest Device (`PCI\VEN&80EE&DEV_CAFE`)
 
 # Todo:
-**VBoxMouse**: Filter driver for mouse pointer integration.
+**VBGTest**: Checks if driver is installed correctly.
+
+**VBoxMous**: Filter driver for mouse pointer integration.
 
 **VBoxTray**: Shared clipboard/drag and drop helper.
-
-**VBoxVideo**: Video driver for dynamic resolution.
 
 # Compiling:
 Microsoft Visual C++ 6.0
 
 Microsoft Windows 2000 DDK
+
+Run `build -cZ` in this folder using Free Build Environment.
 
 Make it compile with something newer please
