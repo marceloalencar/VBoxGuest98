@@ -1,6 +1,6 @@
 #include "VBoxGst.h"
 
-static VBOXOSTYPE g_enmVGDrvOsType = VBOXOSTYPE_UNKNOWN;
+static VBOXOSTYPE           g_enmVGDrvOsType = VBOXOSTYPE_UNKNOWN;
 
 void __forceinline KeMemoryBarrier()
 {
@@ -50,9 +50,15 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 	DriverObject->DriverExtension->AddDevice   = vgdrvWinAddDevice;
 	DriverObject->DriverUnload                 = vgdrvWinUnload;
 	DriverObject->MajorFunction[IRP_MJ_CREATE] = vgdrvWinCreate;
+	//Close
+	//DeviceControl
+	//InternalDeviceControl
+	//Shutdown
+	//Read = NotSupported
+	//Write = NotSupported
 	DriverObject->MajorFunction[IRP_MJ_PNP]    = vgdrvWinPnP;
     DriverObject->MajorFunction[IRP_MJ_POWER]  = vgdrvWinPower;
-	
+	//SystemControl
     return STATUS_SUCCESS;
 }
 
@@ -293,7 +299,6 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PDEVICE_OBJECT 
 				//TODO: Allocate VMMDevPowerStateReq
 				if (NT_SUCCESS(rcNt))
 				{
-					//if success:
 					//IoInitializeDpcRequest(pDevExt->pDeviceObject, vgdrvWinDpcHandler);
 					//if uInterruptVector:
 					//IoConnectInterrupt
@@ -341,6 +346,12 @@ int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT32 fFixedEve
 	PVOID volatile dmaBufferVirt = NULL;
 	PHYSICAL_ADDRESS dmaBufferPhys;
 	VMMDevReqHostVersion reqHostVersion;
+	VMMDevReportGuestInfo2 reportGuestInfo2;
+	VMMDevReportGuestInfo reportGuestInfo;
+	VMMDevCtlGuestFilterMask ctlGuestFilterMask;
+	VMMDevReqGuestCapabilities2 reqGuestCapabilities2;
+	VMMDevReqMouseStatus reqMouseStatus;
+	VMMDevReportGuestStatus reportGuestStatus;
 
 	/*
      * Initialize the guest library and report the guest info back to VMMDev,
@@ -367,30 +378,141 @@ int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT32 fFixedEve
 	{
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
+	//TODO: Shared code for request function
 	//vbglR0QueryHostVersion
 	RtlFillMemory(&reqHostVersion, sizeof(VMMDevReqHostVersion), 0xAA);
-	
 	reqHostVersion.header.size = sizeof(VMMDevReqHostVersion);
 	reqHostVersion.header.version = VMMDEV_REQUEST_HEADER_VERSION;
 	reqHostVersion.header.requestType = VMMDevReq_GetHostVersion;
 	reqHostVersion.header.rc = VERR_GENERAL_FAILURE;
 	reqHostVersion.header.reserved1 = 0;
 	reqHostVersion.header.fRequestor = VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV;
-
 	RtlCopyMemory(dmaBufferVirt, &reqHostVersion, sizeof(VMMDevReqHostVersion));
+
 	WRITE_PORT_ULONG((PULONG)(pDevExt->uIoPortPhysAddr.LowPart), dmaBufferPhys.LowPart);
 	KeMemoryBarrier();
-	DebugPrint("QueryHostVersion: %d.%d.%dr%d %x",
-                 ((VMMDevReqHostVersion *)dmaBufferVirt)->major, ((VMMDevReqHostVersion *)dmaBufferVirt)->minor,
-				 ((VMMDevReqHostVersion *)dmaBufferVirt)->build, ((VMMDevReqHostVersion *)dmaBufferVirt)->revision,
-				 ((VMMDevReqHostVersion *)dmaBufferVirt)->features);
-	RtlCopyMemory(&reqHostVersion, dmaBufferVirt, sizeof(VMMDevReqHostVersion));
-	DebugPrint("QueryHostVersion (Local): %d.%d.%dr%d %x",
-                 reqHostVersion.major, reqHostVersion.minor, reqHostVersion.build, reqHostVersion.revision,
-				 reqHostVersion.features);
-	DebugPrint("rc = %d", ((VMMDevReqHostVersion *)dmaBufferVirt)->header.rc);
+//	DebugPrint("QueryHostVersion: %d.%d.%dr%d %x",
+//               ((VMMDevReqHostVersion *)dmaBufferVirt)->major, ((VMMDevReqHostVersion *)dmaBufferVirt)->minor,
+//				 ((VMMDevReqHostVersion *)dmaBufferVirt)->build, ((VMMDevReqHostVersion *)dmaBufferVirt)->revision,
+//				 ((VMMDevReqHostVersion *)dmaBufferVirt)->features);
+//	RtlCopyMemory(&reqHostVersion, dmaBufferVirt, sizeof(VMMDevReqHostVersion));
+	pDevExt->HostFeatures = ((VMMDevReqHostVersion *)dmaBufferVirt)->features;
+	DebugPrint("Host features: %x", pDevExt->HostFeatures);
+	if (((VMMDevRequestHeader *)dmaBufferVirt)->rc != 0)
+		return STATUS_NOT_SUPPORTED;
 
-	//TODO: REST
+	//ReportGuestInfo
+	RtlFillMemory(&reportGuestInfo2, sizeof(VMMDevReportGuestInfo2), 0xAA);
+	reportGuestInfo2.header.size = sizeof(VMMDevReportGuestInfo2);
+	reportGuestInfo2.header.version = VMMDEV_REQUEST_HEADER_VERSION;
+	reportGuestInfo2.header.requestType = VMMDevReq_ReportGuestInfo2;
+	reportGuestInfo2.header.rc = VERR_GENERAL_FAILURE;
+	reportGuestInfo2.header.reserved1 = 0;
+	reportGuestInfo2.header.fRequestor = VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV;
+	reportGuestInfo2.additionsMajor = VBOX_VERSION_MAJOR;
+	reportGuestInfo2.additionsMinor = VBOX_VERSION_MINOR;
+	reportGuestInfo2.additionsBuild = VBOX_VERSION_BUILD;
+	reportGuestInfo2.additionsRevision = VBOX_SVN_REV;
+	reportGuestInfo2.additionsFeatures = VBOXGSTINFO2_F_REQUESTOR_INFO;
+	strcpy(reportGuestInfo2.szName, VBOX_VERSION_STRING);
+	RtlCopyMemory(dmaBufferVirt, &reportGuestInfo2, sizeof(VMMDevReportGuestInfo2));
+	WRITE_PORT_ULONG((PULONG)(pDevExt->uIoPortPhysAddr.LowPart), dmaBufferPhys.LowPart);
+	KeMemoryBarrier();
+	DebugPrint("ReportGuestInfo2 (%d) rc: %d",((VMMDevRequestHeader *)dmaBufferVirt)->requestType,
+				((VMMDevRequestHeader *)dmaBufferVirt)->rc);
+
+	RtlFillMemory(&reportGuestInfo, sizeof(VMMDevReportGuestInfo), 0xAA);
+	reportGuestInfo.header.size = sizeof(VMMDevReportGuestInfo);
+	reportGuestInfo.header.version = VMMDEV_REQUEST_HEADER_VERSION;
+	reportGuestInfo.header.requestType = VMMDevReq_ReportGuestInfo;
+	reportGuestInfo.header.rc = VERR_GENERAL_FAILURE;
+	reportGuestInfo.header.reserved1 = 0;
+	reportGuestInfo.header.fRequestor = VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV;
+	reportGuestInfo.interfaceVersion = VMMDEV_VERSION;
+	reportGuestInfo.osType = g_enmVGDrvOsType;
+	RtlCopyMemory(dmaBufferVirt, &reportGuestInfo, sizeof(VMMDevReportGuestInfo));
+	WRITE_PORT_ULONG((PULONG)(pDevExt->uIoPortPhysAddr.LowPart), dmaBufferPhys.LowPart);
+	KeMemoryBarrier();
+	DebugPrint("ReportGuestInfo (%d) rc: %d",((VMMDevRequestHeader *)dmaBufferVirt)->requestType,
+				((VMMDevRequestHeader *)dmaBufferVirt)->rc);
+	if (((VMMDevRequestHeader *)dmaBufferVirt)->rc != 0)
+		return STATUS_NOT_SUPPORTED;
+
+	//ResetEventFilterOnHost
+	RtlFillMemory(&ctlGuestFilterMask, sizeof(VMMDevCtlGuestFilterMask), 0xAA);
+	ctlGuestFilterMask.header.size = sizeof(VMMDevCtlGuestFilterMask);
+	ctlGuestFilterMask.header.version = VMMDEV_REQUEST_HEADER_VERSION;
+	ctlGuestFilterMask.header.requestType = VMMDevReq_CtlGuestFilterMask;
+	ctlGuestFilterMask.header.rc = VERR_GENERAL_FAILURE;
+	ctlGuestFilterMask.header.reserved1 = 0;
+	ctlGuestFilterMask.header.fRequestor = VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV;
+	ctlGuestFilterMask.u32OrMask = 0xFFFFFFFFU & ~fFixedEvents;
+	ctlGuestFilterMask.u32NotMask = fFixedEvents;
+	RtlCopyMemory(dmaBufferVirt, &ctlGuestFilterMask, sizeof(VMMDevCtlGuestFilterMask));
+	WRITE_PORT_ULONG((PULONG)(pDevExt->uIoPortPhysAddr.LowPart), dmaBufferPhys.LowPart);
+	KeMemoryBarrier();
+	DebugPrint("CtlGuestFilterMask (%d) rc: %d",((VMMDevRequestHeader *)dmaBufferVirt)->requestType,
+				((VMMDevRequestHeader *)dmaBufferVirt)->rc);
+	if (((VMMDevRequestHeader *)dmaBufferVirt)->rc != 0)
+		return STATUS_NOT_SUPPORTED;
+
+
+	//ResetCapabilitiesOnHost
+	RtlFillMemory(&reqGuestCapabilities2, sizeof(VMMDevReqGuestCapabilities2), 0xAA);
+	reqGuestCapabilities2.header.size = sizeof(VMMDevReqGuestCapabilities2);
+	reqGuestCapabilities2.header.version = VMMDEV_REQUEST_HEADER_VERSION;
+	reqGuestCapabilities2.header.requestType = VMMDevReq_SetGuestCapabilities;
+	reqGuestCapabilities2.header.rc = VERR_GENERAL_FAILURE;
+	reqGuestCapabilities2.header.reserved1 = 0;
+	reqGuestCapabilities2.header.fRequestor = VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV;
+	reqGuestCapabilities2.u32OrMask = 0xFFFFFFFFU;
+	reqGuestCapabilities2.u32NotMask = 0;
+	RtlCopyMemory(dmaBufferVirt, &reqGuestCapabilities2, sizeof(VMMDevReqGuestCapabilities2));
+	WRITE_PORT_ULONG((PULONG)(pDevExt->uIoPortPhysAddr.LowPart), dmaBufferPhys.LowPart);
+	KeMemoryBarrier();
+	DebugPrint("ReqGuestCapabilities2 (%d) rc: %d",((VMMDevRequestHeader *)dmaBufferVirt)->requestType,
+				((VMMDevRequestHeader *)dmaBufferVirt)->rc);
+	if (((VMMDevRequestHeader *)dmaBufferVirt)->rc != 0)
+		return STATUS_NOT_SUPPORTED;
+
+	//ResetMouseStatusOnHost
+	RtlFillMemory(&reqMouseStatus, sizeof(VMMDevReqMouseStatus), 0xAA);
+	reqMouseStatus.header.size = sizeof(VMMDevReqMouseStatus);
+	reqMouseStatus.header.version = VMMDEV_REQUEST_HEADER_VERSION;
+	reqMouseStatus.header.requestType = VMMDevReq_SetMouseStatus;
+	reqMouseStatus.header.rc = VERR_GENERAL_FAILURE;
+	reqMouseStatus.header.reserved1 = 0;
+	reqMouseStatus.header.fRequestor = VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV;
+	reqMouseStatus.mouseFeatures = 0;
+	reqMouseStatus.pointerXPos = 0;
+	reqMouseStatus.pointerYPos = 0;
+	RtlCopyMemory(dmaBufferVirt, &reqMouseStatus, sizeof(VMMDevReqMouseStatus));
+	WRITE_PORT_ULONG((PULONG)(pDevExt->uIoPortPhysAddr.LowPart), dmaBufferPhys.LowPart);
+	KeMemoryBarrier();
+	DebugPrint("ReqMouseStatus (%d) rc: %d",((VMMDevRequestHeader *)dmaBufferVirt)->requestType,
+				((VMMDevRequestHeader *)dmaBufferVirt)->rc);
+	if (((VMMDevRequestHeader *)dmaBufferVirt)->rc != 0)
+		return STATUS_NOT_SUPPORTED;
+
+	//InitFixateGuestMappings
+	//HeartbeatInit
+	//ReportDriverStatus
+	RtlFillMemory(&reportGuestStatus, sizeof(VMMDevReportGuestStatus), 0xAA);
+	reportGuestStatus.header.size = sizeof(VMMDevReportGuestStatus);
+	reportGuestStatus.header.version = VMMDEV_REQUEST_HEADER_VERSION;
+	reportGuestStatus.header.requestType = VMMDevReq_ReportGuestStatus;
+	reportGuestStatus.header.rc = VERR_GENERAL_FAILURE;
+	reportGuestStatus.header.reserved1 = 0;
+	reportGuestStatus.header.fRequestor = VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV;
+	reportGuestStatus.guestStatus.facility = VBoxGuestFacilityType_VBoxGuestDriver;
+	reportGuestStatus.guestStatus.status = VBoxGuestFacilityStatus_Active;
+	reportGuestStatus.guestStatus.flags = 0;
+	RtlCopyMemory(dmaBufferVirt, &reportGuestStatus, sizeof(VMMDevReportGuestStatus));
+	WRITE_PORT_ULONG((PULONG)(pDevExt->uIoPortPhysAddr.LowPart), dmaBufferPhys.LowPart);
+	KeMemoryBarrier();
+	DebugPrint("ReportGuestStatus (%d) rc: %d",((VMMDevRequestHeader *)dmaBufferVirt)->requestType,
+				((VMMDevRequestHeader *)dmaBufferVirt)->rc);
+
 	return STATUS_SUCCESS;
 }
 
@@ -401,6 +523,12 @@ int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT32 fFixedEve
  */
 void VGDrvCommonDeleteDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt)
 {
+	if (pDevExt->dmaAdapter)
+	{
+		pDevExt->dmaAdapter->DmaOperations->FreeCommonBuffer(pDevExt->dmaAdapter, PAGE_SIZE, pDevExt->dmaBufferPhys,
+			pDevExt->dmaBufferVirt, FALSE);
+		pDevExt->dmaAdapter->DmaOperations->PutDmaAdapter(pDevExt->dmaAdapter);
+	}
     pDevExt->pVMMDevMemory = NULL;
 }
 
