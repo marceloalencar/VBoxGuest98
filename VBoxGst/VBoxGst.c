@@ -1,6 +1,7 @@
 #include "VBoxGst.h"
 
 static VBOXOSTYPE           g_enmVGDrvOsType = VBOXOSTYPE_UNKNOWN;
+static VBGLDATA             g_vbgldata;
 
 void __forceinline KeMemoryBarrier()
 {
@@ -67,47 +68,131 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
 *
 * @returns NT status code
 * @param   pDrvObj   Driver object
-* @param   pdo       Device object
+* @param   pDevObj   Device object
 */
-static NTSTATUS NTAPI vgdrvWinAddDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pdo)
+static NTSTATUS NTAPI vgdrvWinAddDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pDevObj)
 {
 	NTSTATUS retStatus = STATUS_SUCCESS;
-	PDEVICE_OBJECT fdo = NULL;
+	UNICODE_STRING DevName;
+	UNICODE_STRING DosName;
+	PDEVICE_OBJECT pDeviceObject = NULL;
 	PVBOXGUESTDEVEXTWIN pDevExt = NULL;
 	
-	retStatus = IoCreateDevice(pDrvObj, sizeof(VBOXGUESTDEVEXTWIN), NULL, FILE_DEVICE_UNKNOWN, 0, FALSE, &fdo);
-	if (!NT_SUCCESS(retStatus))
+	//Create device.
+	RtlInitUnicodeString(&DevName, VBOXGUEST_DEVICE_NAME_NT);
+	retStatus = IoCreateDevice(pDrvObj, sizeof(VBOXGUESTDEVEXTWIN), &DevName, FILE_DEVICE_UNKNOWN, 0, FALSE, &pDeviceObject);
+	if (NT_SUCCESS(retStatus))
 	{
-		//IoCreateDevice failed!
-		return retStatus;
+		//Create symbolic link (DOS devices).
+		RtlInitUnicodeString(&DosName, VBOXGUEST_DEVICE_NAME_DOS);
+		retStatus = IoCreateSymbolicLink(&DosName, &DevName);
+		if (NT_SUCCESS(retStatus))
+		{
+			//Setup the device extension.
+			pDevExt = (PVBOXGUESTDEVEXTWIN)pDeviceObject->DeviceExtension;
+			retStatus = vgdrvWinInitDevExtFundament(pDevExt, pDevObj);
+			if (NT_SUCCESS(retStatus))
+			{
+				pDevExt->pNextLowerDriver = IoAttachDeviceToDeviceStack(pDeviceObject, pDevObj);
+				if (pDevExt->pNextLowerDriver != NULL)
+			    {
+					/* Ensure we are not called at elevated IRQL, even if our code isn't pagable any more. */
+                    pDeviceObject->Flags |= DO_POWER_PAGABLE;
+
+                    /* Driver is ready now. */
+                    pDeviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
+					
+					return retStatus;
+				}
+				//IoAttachDeviceToDeviceStack did not give a nextLowerDriver!
+			    retStatus = STATUS_DEVICE_NOT_CONNECTED;
+			    vgdrvWinDeleteDevExtFundament(pDevExt);
+			}
+			
+			IoDeleteSymbolicLink(&DosName);
+		}
+		else
+		{
+			//IoCreateSymbolicLink failed!
+			IoDeleteDevice(pDeviceObject);
+		}
 	}
-	
-	pDevExt = (PVBOXGUESTDEVEXTWIN)fdo->DeviceExtension;
-	
-	retStatus = IoRegisterDeviceInterface(pdo, &WDM_GUID, NULL, &pDevExt->SymLinkName);
-	if (!NT_SUCCESS(retStatus))
-	{
-		//IoRegisterDeviceInterface failed!
-		IoDeleteDevice(fdo);
-		return retStatus;
-	}
-	
-	IoSetDeviceInterfaceState(&pDevExt->SymLinkName, TRUE);
-	//TODO: Initialize ext fundamentals
-	pDevExt->pDeviceObject = fdo;
-	pDevExt->pNextLowerDriver = IoAttachDeviceToDeviceStack(fdo, pdo);
-	
-	if (pDevExt->pNextLowerDriver == NULL)
-    {
-		//IoAttachDeviceToDeviceStack did not give a nextLowerDriver!
-        retStatus = STATUS_DEVICE_NOT_CONNECTED;
-	}
-	
-	fdo->Flags |= DO_POWER_PAGABLE;
-    fdo->Flags &= ~DO_DEVICE_INITIALIZING;
-	
-    //Returning success
 	return retStatus;
+	
+//	retStatus = IoRegisterDeviceInterface(pDevObj, &WDM_GUID, NULL, &pDevExt->SymLinkName);
+//	if (!NT_SUCCESS(retStatus))
+//	{
+//		//IoRegisterDeviceInterface failed!
+//		IoDeleteDevice(pDeviceObject);
+//		return retStatus;
+//	}
+//	
+//	IoSetDeviceInterfaceState(&pDevExt->SymLinkName, TRUE);
+//	//TODO: Initialize ext fundamentals
+//	pDevExt->pDeviceObject = pDeviceObject;
+}
+
+/**
+* Does the fundamental device extension initialization.
+*
+* @returns NT status.
+* @param   pDevExt             The device extension.
+* @param   pDevObj             The device object.
+*/
+static NTSTATUS vgdrvWinInitDevExtFundament(PVBOXGUESTDEVEXTWIN pDevExt, PDEVICE_OBJECT pDevObj)
+{
+	NTSTATUS rc;
+	
+	RtlZeroMemory(pDevObj, sizeof(PDEVICE_OBJECT));
+	
+	KeInitializeSpinLock(&pDevExt->MouseEventAccessSpinLock);
+	pDevExt->pDeviceObject   = pDevObj;
+	
+	rc = VGDrvCommonInitDevExtFundament(&pDevExt->Core);
+	if (NT_SUCCESS(rc))
+	{
+		return STATUS_SUCCESS;
+	}
+	return STATUS_UNSUCCESSFUL;
+}
+
+/**
+ * Initialize the device extension fundament.
+ *
+ * There are no device resources at this point, VGDrvCommonInitDevExtResources
+ * should be called when they are available.
+ *
+ * @returns VBox status code.
+ * @param   pDevExt         The device extension to init.
+ */
+NTSTATUS VGDrvCommonInitDevExtFundament(PVBOXGUESTDEVEXT pDevExt)
+{
+	NTSTATUS rc = STATUS_SUCCESS;
+	
+	// Initialize the data.
+	pDevExt->fHostFeatures = 0;
+	
+	return rc;
+}
+
+/**
+* Counter part to vgdrvWinInitDevExtFundament.
+*
+* @param   pDevExt             The device extension.
+*/
+static void vgdrvWinDeleteDevExtFundament(PVBOXGUESTDEVEXTWIN pDevExt)
+{
+	VGDrvCommonDeleteDevExtFundament(&pDevExt->Core);
+}
+
+/**
+ * Counter to VGDrvCommonInitDevExtFundament.
+ *
+ * @param   pDevExt         The device extension.
+ */
+void VGDrvCommonDeleteDevExtFundament(PVBOXGUESTDEVEXT pDevExt)
+{
+    //pDevExt->uInitState = VBOXGUESTDEVEXT_INIT_STATE_DELETED;
 }
 
 /**
@@ -117,9 +202,64 @@ static NTSTATUS NTAPI vgdrvWinAddDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT p
 */
 static void NTAPI vgdrvWinUnload(PDRIVER_OBJECT pDrvObj)
 {
-	IoDeleteDevice(pDrvObj->DeviceObject);
+	PDEVICE_OBJECT pDevObj = pDrvObj->DeviceObject;
+	if (pDevObj)
+	{
+		PVBOXGUESTDEVEXTWIN pDevExt = (PVBOXGUESTDEVEXTWIN)pDevObj->DeviceExtension;
+		
+		vgdrvWinDeleteDeviceResources(pDevExt);
+		vgdrvWinDeleteDeviceFundamentAndUnlink(pDevObj, pDevExt);
+	}
+
 	DebugPrintMsg("vgdrvWinUnload");
 	DebugPrintClose();
+}
+
+/**
+ * Deletes the device hardware resources.
+ *
+ * Used during removal, stopping and legacy module unloading.
+ *
+ * @param   pDevExt         The device extension.
+ */
+static void vgdrvWinDeleteDeviceResources(PVBOXGUESTDEVEXTWIN pDevExt)
+{
+    if (pDevExt->pInterruptObject)
+    {
+        IoDisconnectInterrupt(pDevExt->pInterruptObject);
+        pDevExt->pInterruptObject = NULL;
+    }
+    //pDevExt->pPowerStateRequest = NULL; /* Will be deleted by the following call. */
+    //if (pDevExt->Core.uInitState == VBOXGUESTDEVEXT_INIT_STATE_RESOURCES)
+    //    VGDrvCommonDeleteDevExtResources(&pDevExt->Core);
+    vgdrvWinUnmapVMMDevMemory(pDevExt);
+}
+
+/**
+ * Deletes the device extension fundament and unlinks the device
+ *
+ * Used during removal and legacy module unloading.  Must have called
+ * vgdrvNtDeleteDeviceResources.
+ *
+ * @param   pDevObj         Device object.
+ * @param   pDevExt         The device extension.
+ */
+static void vgdrvWinDeleteDeviceFundamentAndUnlink(PDEVICE_OBJECT pDevObj, PVBOXGUESTDEVEXTWIN pDevExt)
+{
+	UNICODE_STRING DosName;
+	
+    /*
+     * Delete the remainder of the device extension.
+     */
+    vgdrvWinDeleteDevExtFundament(pDevExt);
+
+    /*
+     * Delete the DOS symlink to the device and finally the device itself.
+     */
+    RtlInitUnicodeString(&DosName, VBOXGUEST_DEVICE_NAME_DOS);
+    IoDeleteSymbolicLink(&DosName);
+
+    IoDeleteDevice(pDevObj);
 }
 
 /**
@@ -158,8 +298,10 @@ static NTSTATUS NTAPI vgdrvWinPnP(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 	{
 		case IRP_MN_START_DEVICE:
 		{
-			status = vgdrvWinPnPSendIrpSynchronously(pDevExt->pNextLowerDriver, pIrp);
-			if (NT_SUCCESS(status) && NT_SUCCESS(pIrp->IoStatus.Status))
+			/* This must be handled first by the lower driver. */
+			status = vgdrvWinPnPSendIrpSynchronously(pDevExt->pNextLowerDriver, pIrp, TRUE);
+			if (   NT_SUCCESS(status)
+			    && NT_SUCCESS(pIrp->IoStatus.Status))
             {
                 if (pStack->Parameters.StartDevice.AllocatedResources)
                 {
@@ -185,8 +327,8 @@ static NTSTATUS NTAPI vgdrvWinPnP(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 			IoSkipCurrentIrpStackLocation(pIrp);
 			status = IoCallDriver(pDevExt->pNextLowerDriver, pIrp);
 
-			IoSetDeviceInterfaceState(&pDevExt->SymLinkName, FALSE);
-			RtlFreeUnicodeString(&pDevExt->SymLinkName);
+//			IoSetDeviceInterfaceState(&pDevExt->SymLinkName, FALSE);
+//			RtlFreeUnicodeString(&pDevExt->SymLinkName);
 
 			IoDetachDevice(pDevExt->pNextLowerDriver);
 			IoDeleteDevice(pDevObj);
@@ -224,7 +366,7 @@ static NTSTATUS NTAPI vgdrvWinPower(PDEVICE_OBJECT pDevObj, PIRP pIrp)
  * @param    pDevObj    Device object.
  * @param    pIrp       Request packet.
  */
-static NTSTATUS vgdrvWinPnPSendIrpSynchronously(PDEVICE_OBJECT pDevObj, PIRP pIrp)
+static NTSTATUS vgdrvWinPnPSendIrpSynchronously(PDEVICE_OBJECT pDevObj, PIRP pIrp, BOOLEAN fStrict)
 {
     KEVENT Event;
 	NTSTATUS rcNt;
@@ -240,6 +382,12 @@ static NTSTATUS vgdrvWinPnPSendIrpSynchronously(PDEVICE_OBJECT pDevObj, PIRP pIr
         KeWaitForSingleObject(&Event, Executive, KernelMode, FALSE, NULL);
         rcNt = pIrp->IoStatus.Status;
     }
+    
+    if (   !fStrict
+	    && (rcNt == STATUS_NOT_SUPPORTED || rcNt == STATUS_INVALID_DEVICE_REQUEST))
+    {
+		rcNt = STATUS_SUCCESS;
+	}
 
     return rcNt;
 }
@@ -292,19 +440,30 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PDEVICE_OBJECT 
 									   &cbMMIO);
 		if (NT_SUCCESS(rcNt))
 		{
-			pDevExt->pVMMDevMemory = (VMMDevMemory *)pvMMIOBase;
-			rcNt = VGDrvCommonInitDevExtResources(pDevExt, VMMDEV_EVENT_MOUSE_POSITION_CHANGED);
+			pDevExt->Core.pVMMDevMemory = (VMMDevMemory *)pvMMIOBase;
+			//rcNt = VGDrvCommonInitDevExtResources(&pDevExt->Core,
+			rcNt = VGDrvCommonInitDevExtResources(pDevExt,
+                                                  pDevExt->Core.IOPortBase,
+                                                  pvMMIOBase, cbMMIO,
+                                                  VMMDEV_EVENT_MOUSE_POSITION_CHANGED);
 			if (NT_SUCCESS(rcNt))
 			{
 				//TODO: Allocate VMMDevPowerStateReq
 				if (NT_SUCCESS(rcNt))
 				{
-					//IoInitializeDpcRequest(pDevExt->pDeviceObject, vgdrvWinDpcHandler);
-					//if uInterruptVector:
-					//IoConnectInterrupt
-					//if success:
-					//TODO: ReadConfiguration and return success.
-					//else:
+					ULONG uInterruptVector = pDevExt->uInterruptVector;
+					KIRQL uHandlerIrql = (KIRQL)pDevExt->uInterruptLevel;
+					IoInitializeDpcRequest(pDevExt->pDeviceObject, vgdrvWinDpcHandler);
+					if (uInterruptVector)
+					{
+						//rcNt = IoConnectInterrupt
+					}
+					if (NT_SUCCESS(rcNt))
+					{
+						//TODO: ReadConfiguration and return success.
+						return STATUS_SUCCESS;
+					}
+					pDevExt->pInterruptObject = NULL;
 					//TODO: Free VMMDevPowerStateReq
 				}
 				else
@@ -334,10 +493,19 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PDEVICE_OBJECT 
  * @returns VBox status code.
  *
  * @param   pDevExt         The device extension. Allocated by the native code.
+ * @param   IOPortBase      The base of the I/O port range.
+ * @param   pvMmioReq       The base of the MMIO request region.
+ * @param   pvMMIOBase      The base of the MMIO memory mapping.
+ *                          This is optional, pass NULL if not present.
+ * @param   cbMMIO          The size of the MMIO memory mapping.
+ *                          This is optional, pass 0 if not present.
  * @param   fFixedEvents    Events that will be enabled upon init and no client
  *                          will ever be allowed to mask.
  */
-int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT32 fFixedEvents)
+//int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXT pDevExt, UINT16 IOPortBase,
+int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT16 IOPortBase,
+                                   void *pvMMIOBase, UINT32 cbMMIO,
+                                   UINT32 fFixedEvents)
 {
 	int rc;
 	DEVICE_DESCRIPTION devDesc;
@@ -353,11 +521,27 @@ int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT32 fFixedEve
 	VMMDevReqMouseStatus reqMouseStatus;
 	VMMDevReportGuestStatus reportGuestStatus;
 
+    if (pvMMIOBase)
+    {
+    	VMMDevMemory *pVMMDev = (VMMDevMemory *)pvMMIOBase;
+    	if (    pVMMDev->u32Version == VMMDEV_MEMORY_VERSION
+    	    &&  pVMMDev->u32Size >= 32
+		    &&  pVMMDev->u32Size <= cbMMIO)
+	    {
+	    	//pDevExt->pVMMDevMemory = pVMMDev;
+	    	pDevExt->Core.pVMMDevMemory = pVMMDev;
+		}
+	}
+
 	/*
      * Initialize the guest library and report the guest info back to VMMDev,
      * set the interrupt control filter mask, and fixate the guest mappings
      * made by the VMM.
      */
+//    pDevExt->IOPortBase   = IOPortBase;
+	pDevExt->Core.IOPortBase   = IOPortBase;
+//    rc = VbglR0InitPrimary(pDevExt->IOPortBase, (VMMDevMemory *)pDevExt->pVMMDevMemory, &pDevExt->fHostFeatures);
+    
 	RtlZeroMemory(&devDesc, sizeof(DEVICE_DESCRIPTION));
 	devDesc.Version = DEVICE_DESCRIPTION_VERSION;
 	devDesc.Master = FALSE;
@@ -396,8 +580,8 @@ int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT32 fFixedEve
 //				 ((VMMDevReqHostVersion *)dmaBufferVirt)->build, ((VMMDevReqHostVersion *)dmaBufferVirt)->revision,
 //				 ((VMMDevReqHostVersion *)dmaBufferVirt)->features);
 //	RtlCopyMemory(&reqHostVersion, dmaBufferVirt, sizeof(VMMDevReqHostVersion));
-	pDevExt->HostFeatures = ((VMMDevReqHostVersion *)dmaBufferVirt)->features;
-	DebugPrint("Host features: %x", pDevExt->HostFeatures);
+	pDevExt->Core.fHostFeatures = ((VMMDevReqHostVersion *)dmaBufferVirt)->features;
+	DebugPrint("Host features: %x", pDevExt->Core.fHostFeatures);
 	if (((VMMDevRequestHeader *)dmaBufferVirt)->rc != 0)
 		return STATUS_NOT_SUPPORTED;
 
@@ -529,7 +713,8 @@ void VGDrvCommonDeleteDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt)
 			pDevExt->dmaBufferVirt, FALSE);
 		pDevExt->dmaAdapter->DmaOperations->PutDmaAdapter(pDevExt->dmaAdapter);
 	}
-    pDevExt->pVMMDevMemory = NULL;
+    //pDevExt->pVMMDevMemory = NULL;
+    pDevExt->Core.pVMMDevMemory = NULL;
 }
 
 /**
@@ -558,7 +743,7 @@ static NTSTATUS vgdrvWinScanPCIResourceList(PVBOXGUESTDEVEXTWIN pDevExt, PCM_RES
     BOOLEAN                         fGotIrq      = FALSE;
     BOOLEAN                         fGotMmio     = FALSE;
     BOOLEAN                         fGotIoPorts  = FALSE;
-	BOOLEAN                         fGotDma  = FALSE;
+	BOOLEAN                         fGotDma      = FALSE;
     NTSTATUS                        rc           = STATUS_SUCCESS;
     for (i = 0; i < pResList->List->PartialResourceList.Count; i++)
     {
@@ -667,13 +852,55 @@ static NTSTATUS vgdrvWinMapVMMDevMemory(PVBOXGUESTDEVEXTWIN pDevExt, PHYSICAL_AD
  */
 static void vgdrvWinUnmapVMMDevMemory(PVBOXGUESTDEVEXTWIN pDevExt)
 {
-    if (pDevExt->pVMMDevMemory)
+    if (pDevExt->Core.pVMMDevMemory)
     {
-        MmUnmapIoSpace((void*)pDevExt->pVMMDevMemory, pDevExt->cbVmmDevMemory);
-        pDevExt->pVMMDevMemory = NULL;
+        MmUnmapIoSpace((void*)pDevExt->Core.pVMMDevMemory, pDevExt->cbVmmDevMemory);
+        pDevExt->Core.pVMMDevMemory = NULL;
     }
 
     pDevExt->uVmmDevMemoryPhysAddr.QuadPart = 0;
     pDevExt->cbVmmDevMemory = 0;
 }
 
+//int VbglR0InitPrimary(UINT16 portVMMDev, VMMDevMemory *pVMMDevMemory, UINT32 *pfFeatures)
+//{
+//	RtlZeroMemory(g_vbgldata, sizeof(VBGLDATA));
+//	g_vbgldata.portVMMDev = portVMMDev;
+//	g_vbgldata.pVMMDevMemory = pVMMDevMemory;
+//	vbglR0QueryHostVersion();
+//	*pfFeatures = g_vbgldata.hostVersion.features;
+//	return STATUS_SUCCESS;
+//}
+//
+///**
+// * Used by vbglR0QueryDriverInfo and VbglInit to try get the host feature mask
+// * and version information (g_vbgldata::hostVersion).
+// *
+// * This was first implemented by the host in 3.1 and we quietly ignore failures
+// * for that reason.
+// */
+//static void vbglR0QueryHostVersion(void)
+//{
+//    VMMDevReqHostVersion *pReq;
+//    int rc = VbglR0GRAlloc((VMMDevRequestHeader **) &pReq, sizeof (*pReq), VMMDevReq_GetHostVersion);
+//    if (RT_SUCCESS(rc))
+//    {
+//        rc = VbglR0GRPerform(&pReq->header);
+//        if (RT_SUCCESS(rc))
+//        {
+//            g_vbgldata.hostVersion = *pReq;
+//        }
+//        
+//        VbglR0GRFree(&pReq->header);
+//    }
+//}
+//
+//int VbglR0GRAlloc(VMMDevRequestHeader **ppReq, size_t cbReq, VMMDevRequestType enmReqType)
+//{
+//	
+//}
+//
+//void VbglR0GRFree(VMMDevRequestHeader *pReq)
+//{
+//	
+//}

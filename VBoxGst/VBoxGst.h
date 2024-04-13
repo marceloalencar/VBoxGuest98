@@ -9,9 +9,16 @@
 #define VBOX_SVN_REV        (137129)
 #define VBOX_VERSION_STRING "6.1.6"
 
+/** Win32 driver name */
+#define VBOXGUEST_DEVICE_NAME_NT   L"\\Device\\VBoxGuest"
+/** Device name. */
+#define VBOXGUEST_DEVICE_NAME_DOS  L"\\DosDevices\\VBoxGuest"
+
 // {719B4B48-C5DF-4474-A8E7-AF615CA3BC83}
 DEFINE_GUID(WDM_GUID, 
 			0x719b4b48, 0xc5df, 0x4474, 0xa8, 0xe7, 0xaf, 0x61, 0x5c, 0xa3, 0xbc, 0x83);
+
+typedef unsigned short UINT16;
 
 typedef enum VBOXOSTYPE
 {
@@ -39,30 +46,61 @@ typedef struct VMMDevMemory
     } V;
 } VMMDevMemory;
 
+// VBox guest device (data) extension.
+typedef struct VBOXGUESTDEVEXT
+{
+	/** The base of the adapter I/O ports. */
+    UINT16 IOPortBase;
+	/** Pointer to the mapping of the VMMDev adapter memory. */
+	VMMDevMemory volatile *pVMMDevMemory;
+	/** Host feature flags (VMMDEV_HVF_XXX).   */
+	UINT32 fHostFeatures;
+} VBOXGUESTDEVEXT;
+/** Pointer to the VBoxGuest driver data. */
+typedef VBOXGUESTDEVEXT *PVBOXGUESTDEVEXT;
+
+// Subclassing the device extension for adding windows-specific bits.
 typedef struct VBOXGUESTDEVEXTWIN
 {
+	/** The common device extension core. */
+	VBOXGUESTDEVEXT Core;
+	
+	/** Our functional driver object. */
+	PDEVICE_OBJECT pDeviceObject;
+	
+	/** Top of the stack. */
+	PDEVICE_OBJECT pNextLowerDriver;
+	
+	/** Interrupt object pointer. */
+	PKINTERRUPT pInterruptObject;
+	/** Device interrupt level. */
+	ULONG uInterruptLevel;
+	/** Device interrupt vector. */
+	ULONG uInterruptVector;
+	/** Affinity mask. */
+	KAFFINITY fInterruptAffinity;
+	/** LevelSensitive or Latched. */
+	KINTERRUPT_MODE enmInterruptMode;
+	
+	/** Physical address and length of VMMDev memory. */
+    PHYSICAL_ADDRESS uVmmDevMemoryPhysAddr;
+    /** Length of VMMDev memory.   */
+    ULONG cbVmmDevMemory;
+    
+    /** Spinlock protecting MouseNotifyCallback. Required since the consumer is
+     *  in a DPC callback and not the ISR. */
+	KSPIN_LOCK MouseEventAccessSpinLock;
+	
+	//OLD CODEBASE
 	PHYSICAL_ADDRESS uIoPortPhysAddr;
 	ULONG cbIoPort;
-
-	VMMDevMemory volatile *pVMMDevMemory;
-    PHYSICAL_ADDRESS uVmmDevMemoryPhysAddr;
-    ULONG cbVmmDevMemory;
-
-	ULONG uInterruptLevel;
-    ULONG uInterruptVector;
-    KAFFINITY fInterruptAffinity;
-	KINTERRUPT_MODE enmInterruptMode;
-
+	
 	PDMA_ADAPTER dmaAdapter;
 	ULONG dmaBufferSize;
 	PVOID dmaBufferVirt;
 	PHYSICAL_ADDRESS dmaBufferPhys;
-
-	PDEVICE_OBJECT pDeviceObject;
-	PDEVICE_OBJECT pNextLowerDriver;
 	UNICODE_STRING SymLinkName;
-
-	UINT32 HostFeatures;
+	//OLD CODEBASE END
 } VBOXGUESTDEVEXTWIN;
 typedef VBOXGUESTDEVEXTWIN *PVBOXGUESTDEVEXTWIN;
 
@@ -117,6 +155,17 @@ typedef struct
     UINT32 revision;
     UINT32 features;
 } VMMDevReqHostVersion;
+
+//Global VBGL ring-0 data.
+typedef struct VBGLDATA
+{
+	/** I/O port to issue requests to. */
+	UINT16 portVMMDev;
+	/** VMMDev adapter memory region if available. */
+	VMMDevMemory *pVMMDevMemory;
+	/** The host version data. */
+	VMMDevReqHostVersion hostVersion;
+} VBGLDATA;
 
 typedef struct
 {
@@ -184,18 +233,30 @@ typedef struct
 } VMMDevReportGuestStatus;
 
 NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath);
-static NTSTATUS NTAPI vgdrvWinAddDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pdo);
+static NTSTATUS NTAPI vgdrvWinAddDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pDevObj);
+static NTSTATUS       vgdrvWinInitDevExtFundament(PVBOXGUESTDEVEXTWIN pDevExt, PDEVICE_OBJECT pDevObj);
+       NTSTATUS       VGDrvCommonInitDevExtFundament(PVBOXGUESTDEVEXT pDevExt);
+static void           vgdrvWinDeleteDevExtFundament(PVBOXGUESTDEVEXTWIN pDevExt);
+       void           VGDrvCommonDeleteDevExtFundament(PVBOXGUESTDEVEXT pDevExt);
 static void     NTAPI vgdrvWinUnload(PDRIVER_OBJECT pDrvObj);
+static void           vgdrvWinDeleteDeviceResources(PVBOXGUESTDEVEXTWIN pDevExt);
+static void           vgdrvWinDeleteDeviceFundamentAndUnlink(PDEVICE_OBJECT pDevObj, PVBOXGUESTDEVEXTWIN pDevExt);
 static NTSTATUS NTAPI vgdrvWinCreate(PDEVICE_OBJECT pDevObj, PIRP pIrp);
 static NTSTATUS NTAPI vgdrvWinPnP(PDEVICE_OBJECT pDevObj, PIRP pIrp);
 static NTSTATUS NTAPI vgdrvWinPower(PDEVICE_OBJECT pDevObj, PIRP pIrp);
-static NTSTATUS       vgdrvWinPnPSendIrpSynchronously(PDEVICE_OBJECT pDevObj, PIRP pIrp);
+static NTSTATUS       vgdrvWinPnPSendIrpSynchronously(PDEVICE_OBJECT pDevObj, PIRP pIrp, BOOLEAN fStrict);
 static NTSTATUS       vgdrvWinPnpIrpComplete(PDEVICE_OBJECT pDevObj, PIRP pIrp, PKEVENT pEvent);
 static NTSTATUS       vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PDEVICE_OBJECT pDevObj, PIRP pIrp);
-       int            VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT32 fFixedEvents);
+//       int            VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXT pDevExt, UINT16 IOPortBase,
+       int            VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT16 IOPortBase,
+                                                     void *pvMMIOBase, UINT32 cbMMIO,
+                                                     UINT32 fFixedEvents);
        void           VGDrvCommonDeleteDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt);
 static void     NTAPI vgdrvWinDpcHandler(PKDPC pDPC, PDEVICE_OBJECT pDevObj, PIRP pIrp, PVOID pContext);
 static NTSTATUS       vgdrvWinScanPCIResourceList(PVBOXGUESTDEVEXTWIN pDevExt, PCM_RESOURCE_LIST pResList);
 static NTSTATUS       vgdrvWinMapVMMDevMemory(PVBOXGUESTDEVEXTWIN pDevExt, PHYSICAL_ADDRESS PhysAddr,
 											  ULONG cbToMap, void **ppvMMIOBase, UINT32 *pcbMMIO);
 static void           vgdrvWinUnmapVMMDevMemory(PVBOXGUESTDEVEXTWIN pDevExt);
+//       int            VbglR0InitPrimary(UINT16 portVMMDev, VMMDevMemory *pVMMDevMemory, UINT32 *pfFeatures);
+//static void           vbglR0QueryHostVersion(void);
+//       int            VbglR0GRAlloc(VMMDevRequestHeader **ppReq, size_t cbReq, VMMDevRequestType enmReqType);
