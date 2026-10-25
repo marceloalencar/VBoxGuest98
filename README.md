@@ -7,6 +7,19 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 **VBGTest**: Checks if driver is installed correctly and exercises its interface
 (versions, raw VMMDev request, event wait, guest property read over HGCM).
 
+**VBoxTray**: Tray application started at logon (installed by `VBoxGst.inf`):
+- Mouse pointer integration: reports absolute pointing support to the host and
+  positions the pointer with `mouse_event` when the host mouse moves. Windows 98
+  drives the PS/2 mouse with VxDs, so this is done in user mode rather than with a
+  WDM filter driver. Buttons still come through the PS/2 mouse.
+- Time synchronization: sets the guest clock when it is off by 1 second or more,
+  every 10 seconds and after restoring a saved state (Windows 98 can't slew the clock).
+- Shared clipboard, text only, using the legacy `VBoxSharedClipboard` HGCM protocol.
+  Guest text is ANSI (`CF_TEXT`, converted with the active code page); the
+  host side is UTF-16. Host text is copied to the guest clipboard as soon as
+  the host reports it.
+- Reports the VBoxTrayClient facility status to the host.
+
 ## VBoxGst features
 - Reports guest info (OS type, additions version) and driver facility status to the host.
 - Interrupt handling: events are acknowledged in the ISR and dispatched in a DPC.
@@ -37,16 +50,22 @@ to VxDs on Windows 98.
 | `VBoxGst/Hgcm.c` | HGCM requests |
 | `VBoxGst/Ioctl.c` | Device control dispatch |
 | `VBoxGst/VbglR0.c` | VMMDev request allocation (DMA common buffers) and submission |
+| `VBoxTray/VBoxTray.c` | WinMain, tray icon, service threads |
+| `VBoxTray/Mouse.c` | Mouse pointer integration |
+| `VBoxTray/TimeSync.c` | Guest clock synchronization |
+| `VBoxTray/Clipboard.c` | Shared clipboard (text) |
+| `VBoxTray/VbglR3.c` | Driver access helpers for user mode |
 
 The driver must only import functions NTKERN.VXD provides: check with
 `dumpbin /imports VBoxGst.sys` after adding new kernel calls.
 
 # Todo:
 
-**VBoxMous**: Filter driver for mouse pointer integration
-(use `IOCTL_VBOXGUEST98_INTERNAL_SET_MOUSE_NOTIFY` and `..._SET_MOUSE_STATUS`).
+**VBoxTray**: Clipboard bitmaps and HTML, drag and drop.
 
-**VBoxTray**: Shared clipboard/drag and drop helper (use the HGCM I/O controls).
+**Mouse**: If the user mode integration proves too slow, a VMOUSE VxD or a HID
+minidriver could use `IOCTL_VBOXGUEST98_INTERNAL_SET_MOUSE_NOTIFY` and
+`..._SET_MOUSE_STATUS` instead.
 
 # Compiling:
 Microsoft Visual C++ 6.0

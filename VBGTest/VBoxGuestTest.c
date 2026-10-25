@@ -4,7 +4,8 @@
  * Exercises the I/O control interface from VBoxGuest98.h:
  *  1. Locate and open the device through its device interface.
  *  2. Query driver and host versions.
- *  3. Perform a raw VMMDev request (host time).
+ *  3. Perform a raw VMMDev request (host time), and show how the guest
+ *     converts it to local time (diagnostics for VBoxTray's time sync).
  *  4. Check that a driver managed request is refused.
  *  5. Wait for an event with a short timeout.
  *  6. Read a guest property through HGCM (VBoxGuestPropSvc).
@@ -126,6 +127,11 @@ static void testVersionInfo(HANDLE hDevice)
            (unsigned long)Info.uHostBuild, (unsigned long)Info.uHostRevision, (unsigned long)Info.fHostFeatures);
     printf("OS type:           %lx\n", (unsigned long)Info.enmOsType);
     printf("Heartbeat:         %lu ms\n", (unsigned long)Info.cMsHeartbeatInterval);
+    if ((Info.u32InterfaceVersion & 0xffff) >= 1) /* Field added in 1.1. */
+        printf("Heartbeat setup:   rc=%ld (VMMDevReqHeartbeat is %u bytes)\n",
+               (long)Info.rcHeartbeat, (unsigned)sizeof(VMMDevReqHeartbeat));
+    else
+        printf("Heartbeat setup:   unknown, driver is older than interface 1.1\n");
     if ((Info.u32InterfaceVersion >> 16) != (VBOXGUEST98_IOCTL_VERSION >> 16))
         testFailed("GET_VERSION_INFO", "interface version mismatch");
 }
@@ -144,6 +150,90 @@ static void testHostTime(HANDLE hDevice)
     }
     else
         printf("Host time:         %I64u ms since 1970\n", Req.time);
+}
+
+static void printSystemTime(const char *pszLabel, const SYSTEMTIME *pst)
+{
+    printf("%-19s%04u-%02u-%02u %02u:%02u:%02u\n", pszLabel, pst->wYear, pst->wMonth, pst->wDay,
+           pst->wHour, pst->wMinute, pst->wSecond);
+}
+
+static void printTimeZoneRule(const char *pszLabel, const WCHAR *pwszName, const SYSTEMTIME *pst, LONG lBias)
+{
+    /* wDay is the week of the month (5 = last) when wYear is 0. */
+    printf("  %-9s%S: bias %ld, month %u, week %u, day-of-week %u, %02u:%02u\n", pszLabel, pwszName, lBias,
+           pst->wMonth, pst->wDay, pst->wDayOfWeek, pst->wHour, pst->wMinute);
+}
+
+static void printRegistryValue(HKEY hKey, const char *pszName)
+{
+    DWORD dwValue = 0;
+    DWORD cbValue = sizeof(dwValue);
+    DWORD dwType = 0;
+
+    /* Windows 98 stores these as 4 byte REG_BINARY values. */
+    if (   RegQueryValueEx(hKey, pszName, NULL, &dwType, (LPBYTE)&dwValue, &cbValue) == ERROR_SUCCESS
+        && cbValue == sizeof(dwValue))
+        printf("  %-27s%ld\n", pszName, (long)dwValue);
+    else
+        printf("  %-27s(not set)\n", pszName);
+}
+
+static void testTimeZone(HANDLE hDevice)
+{
+    static const char * const s_apszTzId[] = { "standard", "daylight" };
+    TIME_ZONE_INFORMATION Tzi;
+    VMMDevReqHostTime Req;
+    SYSTEMTIME stHost;
+    SYSTEMTIME stUtc;
+    SYSTEMTIME stLocal;
+    ULARGE_INTEGER uHost;
+    ULARGE_INTEGER uGuest;
+    FILETIME ftHost;
+    FILETIME ftGuest;
+    DWORD dwTzId;
+    HKEY hKey;
+
+    initRequestHeader(&Req.header, sizeof(Req), VMMDevReq_GetHostTime);
+    if (   !doIoCtl(hDevice, IOCTL_VBOXGUEST98_VMMDEV_REQUEST, &Req, sizeof(Req), sizeof(Req))
+        || RT_FAILURE(Req.header.rc))
+        return; /* Reported by testHostTime. */
+
+    GetSystemTimeAsFileTime(&ftGuest);
+    GetSystemTime(&stUtc);
+    GetLocalTime(&stLocal);
+
+    uHost.QuadPart = (Req.time + 11644473600000ui64) * 10000; /* ms since 1970 -> 100ns since 1601 */
+    ftHost.dwLowDateTime  = uHost.LowPart;
+    ftHost.dwHighDateTime = uHost.HighPart;
+    FileTimeToSystemTime(&ftHost, &stHost);
+    uGuest.LowPart  = ftGuest.dwLowDateTime;
+    uGuest.HighPart = ftGuest.dwHighDateTime;
+
+    printSystemTime("Host UTC:", &stHost);
+    printSystemTime("Guest UTC:", &stUtc);
+    printSystemTime("Guest local time:", &stLocal);
+    printf("Guest - host UTC:  %ld s\n", (long)(((__int64)uGuest.QuadPart - (__int64)uHost.QuadPart) / 10000000));
+
+    dwTzId = GetTimeZoneInformation(&Tzi);
+    printf("Time zone:         %s, bias %ld min (local = UTC - bias)\n",
+           dwTzId == TIME_ZONE_ID_STANDARD || dwTzId == TIME_ZONE_ID_DAYLIGHT ? s_apszTzId[dwTzId - 1]
+           : dwTzId == TIME_ZONE_ID_UNKNOWN ? "no daylight saving" : "error",
+           (long)Tzi.Bias);
+    printTimeZoneRule("Standard", Tzi.StandardName, &Tzi.StandardDate, Tzi.StandardBias);
+    printTimeZoneRule("Daylight", Tzi.DaylightName, &Tzi.DaylightDate, Tzi.DaylightBias);
+
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, "System\\CurrentControlSet\\Control\\TimeZoneInformation",
+                     0, KEY_READ, &hKey) == ERROR_SUCCESS)
+    {
+        printf("Registry TimeZoneInformation:\n");
+        printRegistryValue(hKey, "Bias");
+        printRegistryValue(hKey, "ActiveTimeBias");
+        printRegistryValue(hKey, "StandardBias");
+        printRegistryValue(hKey, "DaylightBias");
+        printRegistryValue(hKey, "DisableAutoDaylightTimeSet");
+        RegCloseKey(hKey);
+    }
 }
 
 static void testRefusedRequest(HANDLE hDevice)
@@ -264,6 +354,7 @@ int __cdecl main(void)
 
     testVersionInfo(hDevice);
     testHostTime(hDevice);
+    testTimeZone(hDevice);
     testRefusedRequest(hDevice);
     testWaitForEvents(hDevice);
     testGuestProperty(hDevice);

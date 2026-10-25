@@ -8,7 +8,9 @@ INCLUDES=..\inc
 SOURCES= \
         VBoxGuestTest.c
 
-TARGETLIBS=$(SDK_LIB_PATH)\setupapi.lib
+TARGETLIBS= \
+        $(SDK_LIB_PATH)\setupapi.lib \
+        $(SDK_LIB_PATH)\advapi32.lib
 
 LIB=$(MSVCDIR)\lib
 INCLUDE=$(MSVCDIR)\include

@@ -34,7 +34,7 @@
 #define VBOX_VERSION_STRING             "6.1.6"
 
 /** Version of this interface, high word is major (incompatible changes). */
-#define VBOXGUEST98_IOCTL_VERSION       (0x00010000U)
+#define VBOXGUEST98_IOCTL_VERSION       (0x00010001U)
 
 /** Native device name. */
 #define VBOXGUEST98_DEVICE_NAME_NT      L"\\Device\\VBoxGuest"
@@ -132,6 +132,8 @@ typedef struct VBOXGUEST98VERSIONINFO
     UINT32 fFixedEvents;
     /** Heartbeat interval in milliseconds, 0 if disabled. */
     UINT32 cMsHeartbeatInterval;
+    /** VBox status of the heartbeat setup (since interface 1.1). */
+    INT32  rcHeartbeat;
 } VBOXGUEST98VERSIONINFO;
 
 /** IOCTL_VBOXGUEST98_WAIT_FOR_EVENTS input/output. */

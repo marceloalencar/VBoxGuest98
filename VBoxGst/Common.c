@@ -278,10 +278,12 @@ static void vgdrvHeartbeatInit(PVBOXGUESTDEVEXT pDevExt)
     int rc;
 
     rc = VbglR0GRAlloc(&pDevExt->pHeartbeatReq, sizeof(VMMDevRequestHeader), VMMDevReq_GuestHeartbeat);
+    pDevExt->rcHeartbeat = rc;
     if (RT_FAILURE(rc))
         return;
 
     rc = vgdrvHeartbeatHostConfigure(TRUE, &cMsInterval);
+    pDevExt->rcHeartbeat = rc;
     if (RT_FAILURE(rc) || cMsInterval == 0)
     {
         VbglR0GRFree(pDevExt->pHeartbeatReq);

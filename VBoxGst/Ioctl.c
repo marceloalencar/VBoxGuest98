@@ -65,6 +65,7 @@ static NTSTATUS vgdrvIoCtlGetVersionInfo(PVBOXGUESTDEVEXT pDevExt, PVOID pvBuf, 
     pInfo->enmOsType            = (UINT32)pDevExt->enmOsType;
     pInfo->fFixedEvents         = pDevExt->fFixedEvents;
     pInfo->cMsHeartbeatInterval = pDevExt->cMsHeartbeatInterval;
+    pInfo->rcHeartbeat          = pDevExt->rcHeartbeat;
 
     *pcbRet = sizeof(*pInfo);
     return STATUS_SUCCESS;

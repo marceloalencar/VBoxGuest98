@@ -172,6 +172,8 @@ typedef struct VBOXGUESTDEVEXT
     KDPC HeartbeatDpc;
     /** Heartbeat interval in milliseconds, 0 if disabled. */
     UINT32 cMsHeartbeatInterval;
+    /** Status of the last heartbeat setup attempt (for diagnostics). */
+    int rcHeartbeat;
 } VBOXGUESTDEVEXT;
 /** Pointer to the VBoxGuest driver data. */
 typedef VBOXGUESTDEVEXT *PVBOXGUESTDEVEXT;

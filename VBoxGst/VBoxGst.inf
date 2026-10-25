@@ -8,6 +8,7 @@ Provider=%String0%
 
 [DestinationDirs]
 DefaultDestDir=10,SYSTEM32\DRIVERS
+VBoxTray_CopyFiles=11
 
 [Manufacturer]
 %String0%=VBoxGuest
@@ -16,17 +17,24 @@ DefaultDestDir=10,SYSTEM32\DRIVERS
 %String1%=VBoxGuest_Install,PCI\VEN_80ee&DEV_cafe
 
 [VBoxGuest_Install]
-CopyFiles=VBoxGuest_CopyFiles
-AddReg=VBoxGuest_AddReg
+CopyFiles=VBoxGuest_CopyFiles,VBoxTray_CopyFiles
+AddReg=VBoxGuest_AddReg,VBoxTray_AddReg
 
 [VBoxGuest_CopyFiles]
 VBoxGst.sys
+
+[VBoxTray_CopyFiles]
+VBoxTray.exe
 
 [VBoxGuest_AddReg]
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,VBoxGst.sys
 ; Set to 01,00,00,00 to have the VM powered off when Windows shuts down.
 HKR,,PowerOffOnShutdown,1,00,00,00,00
+
+[VBoxTray_AddReg]
+; Starts VBoxTray (mouse integration, time sync) at logon.
+HKLM,"Software\Microsoft\Windows\CurrentVersion\Run",VBoxTray,,"%11%\VBoxTray.exe"
 
 [ControlFlags]
 
@@ -38,6 +46,7 @@ HKR,,PowerOffOnShutdown,1,00,00,00,00
 
 [SourceDisksFiles]
 VBoxGst.sys=1
+VBoxTray.exe=1
 
 [Strings]
 String0="Oracle Corporation"

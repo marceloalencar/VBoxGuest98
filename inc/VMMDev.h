@@ -37,6 +37,7 @@
 #define VERR_OUT_OF_RANGE               (-54)
 #define VERR_NOT_FOUND                  (-78)
 #define VERR_INTERNAL_ERROR             (-225)
+#define VINF_BUFFER_OVERFLOW            (41)
 #define VINF_HGCM_ASYNC_EXECUTE         (2903)
 
 #define RT_SUCCESS(rc)                  ((int)(rc) >= VINF_SUCCESS)
@@ -369,15 +370,16 @@ typedef struct
     VMMDevPowerState powerState;
 } VMMDevPowerStateRequest;
 
-/** VMMDevReq_HeartbeatConfigure. */
+/** VMMDevReq_HeartbeatConfigure.  Must be exactly 24 + 12 bytes, the host
+ *  refuses any other size with VERR_INVALID_PARAMETER. */
 typedef struct
 {
     VMMDevRequestHeader header;
+    /** OUT: Heartbeat interval in nanoseconds. */
+    UINT64  cNsInterval;
     /** IN: Whether the guest heartbeat is enabled. */
     BOOLEAN fEnabled;
     UCHAR   abPadding[3];
-    /** OUT: Heartbeat interval in nanoseconds. */
-    UINT64  cNsInterval;
 } VMMDevReqHeartbeat;
 
 /** VMMDevReq_LogString. */
@@ -514,6 +516,70 @@ typedef struct
 #define GUEST_PROP_FN_GET_PROP                          1
 #define GUEST_PROP_FN_GET_PROP_CPARMS                   4
 
+
+/*********************************************************************************************************************************
+*   Shared clipboard HGCM service, legacy protocol (used by VBoxTray)                                                            *
+*********************************************************************************************************************************/
+
+#define VBOX_SHCL_SERVICE_NAME                          "VBoxSharedClipboard"
+
+/** @name Host messages (returned by VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT).
+ * @{ */
+/** The guest must disconnect and stop. */
+#define VBOX_SHCL_HOST_MSG_QUIT                         1
+/** The host wants the guest clipboard data in the given format. */
+#define VBOX_SHCL_HOST_MSG_READ_DATA                    2
+/** The host clipboard changed, the formats it now has are given. */
+#define VBOX_SHCL_HOST_MSG_FORMATS_REPORT               3
+/** @} */
+
+/** @name Guest functions.
+ * @{ */
+/** Waits for a host message.  Parms: [0] message (32bit out), [1] formats (32bit out). */
+#define VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT             1
+/** Reports the guest clipboard formats.  Parms: [0] formats (32bit in). */
+#define VBOX_SHCL_GUEST_FN_REPORT_FORMATS               2
+/** Reads host clipboard data.  Parms: [0] format (32bit in), [1] data (buffer out),
+ *  [2] size of the data (32bit out).  VINF_BUFFER_OVERFLOW if the buffer is too small. */
+#define VBOX_SHCL_GUEST_FN_DATA_READ                    3
+/** Sends guest clipboard data (answer to READ_DATA).  Parms: [0] format (32bit in),
+ *  [1] data (buffer in). */
+#define VBOX_SHCL_GUEST_FN_DATA_WRITE                   4
+/** @} */
+
+/** @name Clipboard formats (bit mask).
+ * @{ */
+#define VBOX_SHCL_FMT_NONE                              0
+/** UTF-16LE text, zero terminated, CRLF line endings. */
+#define VBOX_SHCL_FMT_UNICODETEXT                       (1U << 0)
+#define VBOX_SHCL_FMT_BITMAP                            (1U << 1)
+#define VBOX_SHCL_FMT_HTML                              (1U << 2)
+/** @} */
+
 #pragma pack(pop)
+
+/** Compile time size check (C89: a negative array size fails to compile). */
+#define VMMDEV_ASSERT_SIZE(type, cb)    typedef char type##_SizeCheck[sizeof(type) == (cb) ? 1 : -1]
+
+/* Sizes from the AssertCompileSize statements in upstream VMMDev.h; the host
+   checks most of them. */
+VMMDEV_ASSERT_SIZE(VMMDevRequestHeader, 24);
+VMMDEV_ASSERT_SIZE(VMMDevReqMouseStatus, 24+12);
+VMMDEV_ASSERT_SIZE(VMMDevReqHostVersion, 24+16);
+VMMDEV_ASSERT_SIZE(VMMDevReqHostTime, 24+8);
+VMMDEV_ASSERT_SIZE(VMMDevEvents, 24+4);
+VMMDEV_ASSERT_SIZE(VMMDevCtlGuestFilterMask, 24+8);
+VMMDEV_ASSERT_SIZE(VMMDevReportGuestInfo, 24+8);
+VMMDEV_ASSERT_SIZE(VMMDevReportGuestInfo2, 24+144);
+VMMDEV_ASSERT_SIZE(VMMDevReqGuestCapabilities2, 24+8);
+VMMDEV_ASSERT_SIZE(VMMDevReportGuestStatus, 24+12);
+VMMDEV_ASSERT_SIZE(VMMDevPowerStateRequest, 24+4);
+VMMDEV_ASSERT_SIZE(VMMDevReqHeartbeat, 24+12);
+VMMDEV_ASSERT_SIZE(VMMDevHGCMRequestHeader, 24+8);
+VMMDEV_ASSERT_SIZE(VMMDevHGCMConnect, 32+132+4);
+VMMDEV_ASSERT_SIZE(VMMDevHGCMDisconnect, 32+4);
+VMMDEV_ASSERT_SIZE(VMMDevHGCMCall, 32+12);
+VMMDEV_ASSERT_SIZE(HGCMFunctionParameter32, 4+8);
+VMMDEV_ASSERT_SIZE(VMMDevHGCMCancel2, 24+4);
 
 #endif /* !VBOXGUEST98_VMMDEV_H */
