@@ -11,6 +11,7 @@
 #include "VBoxTrayRes.h"
 #include <shellapi.h>
 #include <process.h>
+#include <stdarg.h>
 #include <string.h>
 
 
@@ -75,6 +76,31 @@ static HINSTANCE g_hInstance;
 static HICON g_hIconSmall;
 /** "TaskbarCreated" message, sent when Explorer restarts. */
 static UINT g_uMsgTaskbarCreated;
+/** Device handle for logging, shared by all threads (the writes don't block). */
+static HANDLE g_hVBoxTrayLog = INVALID_HANDLE_VALUE;
+
+
+/**
+ * Writes a formatted line to the release log (see VBoxTray.h).
+ */
+void __cdecl VBoxTrayLogRel(const char *pszFormat, ...)
+{
+    /* wvsprintf writes at most 1024 characters. */
+    static const char s_szPrefix[] = "VBoxTray: ";
+    char szLine[sizeof(s_szPrefix) + 1024];
+    va_list va;
+    int cch;
+
+    if (g_hVBoxTrayLog == INVALID_HANDLE_VALUE)
+        return;
+
+    memcpy(szLine, s_szPrefix, sizeof(s_szPrefix) - 1);
+    va_start(va, pszFormat);
+    cch = wvsprintf(&szLine[sizeof(s_szPrefix) - 1], pszFormat, va);
+    va_end(va);
+    if (cch > 0)
+        VbglR3WriteLog(g_hVBoxTrayLog, szLine, sizeof(s_szPrefix) - 1 + cch);
+}
 
 
 /**
@@ -181,6 +207,8 @@ static void vboxTrayStartServices(void)
     {
         unsigned idThread;
         g_aServices[i].hThread = (HANDLE)_beginthreadex(NULL, 0, g_aServices[i].pfnThread, NULL, 0, &idThread);
+        if (!g_aServices[i].hThread)
+            VBoxTrayLogRel("%s: thread creation failed\n", g_aServices[i].pszName);
     }
 }
 
@@ -208,6 +236,9 @@ static void vboxTrayStopServices(void)
     for (i = 0; i < sizeof(g_aServices) / sizeof(g_aServices[0]); i++)
         if (g_aServices[i].hThread)
         {
+            DWORD dwExit = 0;
+            if (!GetExitCodeThread(g_aServices[i].hThread, &dwExit) || dwExit == STILL_ACTIVE)
+                VBoxTrayLogRel("%s: thread did not stop\n", g_aServices[i].pszName);
             CloseHandle(g_aServices[i].hThread);
             g_aServices[i].hThread = NULL;
         }
@@ -251,7 +282,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
             CloseHandle(hMutex);
         return 1;
     }
-    VbglR3Close(hDevice);
+    /* Keep this one open for logging. */
+    g_hVBoxTrayLog = hDevice;
+    VBoxTrayLogRel("VBoxTray %s r%u started\n", VBOX_VERSION_STRING, VBOX_SVN_REV);
 
     g_uMsgTaskbarCreated = RegisterWindowMessage("TaskbarCreated");
 
@@ -269,6 +302,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
     WndCls.lpszClassName = VBOXTRAY_WND_CLASS;
     if (!RegisterClass(&WndCls))
     {
+        VBoxTrayLogRel("RegisterClass failed, error %lu\n", GetLastError());
+        VbglR3Close(g_hVBoxTrayLog);
         if (hMutex)
             CloseHandle(hMutex);
         return 1;
@@ -295,6 +330,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
     vboxTrayReportStatus(VBoxGuestFacilityStatus_Terminating);
     vboxTrayStopServices();
     vboxTrayReportStatus(VBoxGuestFacilityStatus_Terminated);
+
+    VBoxTrayLogRel("stopped\n");
+    hDevice = g_hVBoxTrayLog;
+    g_hVBoxTrayLog = INVALID_HANDLE_VALUE;
+    VbglR3Close(hDevice);
 
     UnregisterClass(VBOXTRAY_WND_CLASS, hInstance);
     DestroyIcon(g_hIconSmall); /* No-op for the shared fallback icon. */

@@ -202,6 +202,28 @@ static void vboxDisplayAddedMode(char *pszMode, BOOL fWrite)
 }
 
 /**
+ * Switches to a mode, keeping it in the registry, and logs the outcome.
+ *
+ * @returns TRUE on success.
+ * @param   pMode       The mode (resolution and color depth are used).
+ * @param   pszHow      How the mode was chosen, for the log.
+ */
+static BOOL vboxDisplaySetMode(DEVMODE *pMode, const char *pszHow)
+{
+    LONG lRc;
+
+    pMode->dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
+    lRc = ChangeDisplaySettings(pMode, CDS_UPDATEREGISTRY);
+    if (lRc == DISP_CHANGE_SUCCESSFUL)
+        VBoxTrayLogRel("Display: switched to %lux%lux%lu (%s)\n",
+                       pMode->dmPelsWidth, pMode->dmPelsHeight, pMode->dmBitsPerPel, pszHow);
+    else
+        VBoxTrayLogRel("Display: switching to %lux%lux%lu (%s) failed, %ld\n",
+                       pMode->dmPelsWidth, pMode->dmPelsHeight, pMode->dmBitsPerPel, pszHow, lRc);
+    return lRc == DISP_CHANGE_SUCCESSFUL;
+}
+
+/**
  * Tries to switch to an exact resolution the driver doesn't list, by adding
  * it to the mode list first.  The previously added mode is removed.
  *
@@ -231,8 +253,7 @@ static BOOL vboxDisplayResizeExact(const DEVMODE *pCurrent, DWORD cx, DWORD cy)
     Mode = *pCurrent;
     Mode.dmPelsWidth  = cx;
     Mode.dmPelsHeight = cy;
-    Mode.dmFields     = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
-    if (ChangeDisplaySettings(&Mode, CDS_UPDATEREGISTRY) != DISP_CHANGE_SUCCESSFUL)
+    if (!vboxDisplaySetMode(&Mode, "added to the mode list"))
     {
         RegDeleteKey(HKEY_LOCAL_MACHINE, szMode);
         return FALSE;
@@ -271,8 +292,7 @@ static void vboxDisplayResize(DWORD cx, DWORD cy)
         && Mode.dmPelsWidth == cx
         && Mode.dmPelsHeight == cy)
     {
-        Mode.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
-        ChangeDisplaySettings(&Mode, CDS_UPDATEREGISTRY);
+        vboxDisplaySetMode(&Mode, "listed mode");
         return;
     }
 
@@ -281,12 +301,14 @@ static void vboxDisplayResize(DWORD cx, DWORD cy)
 
     /* Fall back to the largest offered mode that fits. */
     if (!vboxDisplayFindMode(cx, cy, Current.dmBitsPerPel, &Mode))
+    {
+        VBoxTrayLogRel("Display: no mode fits %lux%lu\n", cx, cy);
         return;
+    }
     if (Mode.dmPelsWidth == Current.dmPelsWidth && Mode.dmPelsHeight == Current.dmPelsHeight)
         return; /* Already the best fit. */
 
-    Mode.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
-    ChangeDisplaySettings(&Mode, CDS_UPDATEREGISTRY);
+    vboxDisplaySetMode(&Mode, "best fit");
 }
 
 /**
@@ -307,6 +329,7 @@ static void vboxDisplayHandleRequest(HANDLE hDevice, BOOL fAck)
         return;
     if (iDisplay != 0 || (!cx && !cy))
         return; /* Secondary display, or nothing to change. */
+    VBoxTrayLogRel("Display: host asks for %lux%lu\n", cx, cy);
     vboxDisplayResize(cx, cy);
 }
 
@@ -331,6 +354,7 @@ unsigned __stdcall VBoxDisplayThread(void *pvUser)
         rc = VbglR3ChangeGuestCapabilities(hDevice, VMMDEV_GUEST_SUPPORTS_GRAPHICS, 0);
     if (RT_FAILURE(rc))
     {
+        VBoxTrayLogRel("Display: setup failed, rc=%d\n", rc);
         VbglR3Close(hDevice);
         return 1;
     }

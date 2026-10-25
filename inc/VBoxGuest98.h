@@ -37,7 +37,7 @@
 *********************************************************************************************************************************/
 
 /** Version of this interface, high word is major (incompatible changes). */
-#define VBOXGUEST98_IOCTL_VERSION       (0x00010001U)
+#define VBOXGUEST98_IOCTL_VERSION       (0x00010002U)
 
 /** Native device name. */
 #define VBOXGUEST98_DEVICE_NAME_NT      L"\\Device\\VBoxGuest"
@@ -58,6 +58,8 @@ DEFINE_GUID(GUID_DEVINTERFACE_VBOXGUEST98,
 #define VBOXGUEST98_MAX_HGCM_DATA_SIZE  (262144U)
 /** Number of HGCM clients a single session may have connected at once. */
 #define VBOXGUEST98_MAX_HGCM_CLIENTS    (32)
+/** Largest text accepted by IOCTL_VBOXGUEST98_WRITE_LOG. */
+#define VBOXGUEST98_MAX_LOG_SIZE        (4096U)
 
 
 /*********************************************************************************************************************************
@@ -94,6 +96,10 @@ DEFINE_GUID(GUID_DEVINTERFACE_VBOXGUEST98,
 /** Call an HGCM service function.  In/out: VBOXGUEST98HGCMCALL followed by
  *  cParms VBOXGUEST98HGCMPARM entries and the data area. */
 #define IOCTL_VBOXGUEST98_HGCM_CALL                 VBOXGUEST98_IOCTL_CODE(9)
+/** Write text to the release log (VBox.log on the host, through the VMMDev
+ *  backdoor port; since interface 1.2).  In: the text, no terminator; lines
+ *  should end with a newline. */
+#define IOCTL_VBOXGUEST98_WRITE_LOG                 VBOXGUEST98_IOCTL_CODE(10)
 
 /** @name Internal I/O controls (IRP_MJ_INTERNAL_DEVICE_CONTROL).
  * Only for kernel mode clients, must be sent at PASSIVE_LEVEL.

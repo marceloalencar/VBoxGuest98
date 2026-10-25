@@ -31,6 +31,8 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
   mode it added is kept); if that fails, the largest listed mode that fits is
   used. The color depth is kept.
 - Reports the VBoxTrayClient facility status to the host.
+- Logs start/stop, setup failures, clock adjustments, display mode changes
+  and the statistics interval to the release log (see below).
 
 ## VBoxGst features
 - Reports guest info (OS type, additions version) and driver facility status to the host.
@@ -43,6 +45,12 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 - Mouse position notification callback for a kernel mode mouse filter (VBoxMous).
 - Guest heartbeat.
 - Optional VM power off when Windows shuts down (`PowerOffOnShutdown` in the INF).
+- Release log through the VMMDev backdoor port (0x504): versions, host features,
+  resources, heartbeat and failures go to the VM's `VBox.log` as
+  `VMMDev: Guest Log: VBoxGst: ...` lines. User mode writes there with
+  `IOCTL_VBOXGUEST98_WRITE_LOG` (VBoxTray lines start with `VBoxTray:`).
+  Checked builds also log HGCM connects and disconnects. The host ignores the
+  port when the VM has `VBoxInternal/Devices/VMMDev/0/Config/BackdoorLogDisabled` set.
 
 The client interface (I/O control codes and structures) is in
 [inc/VBoxGuest98.h](inc/VBoxGuest98.h). It is **not** binary compatible with the
@@ -62,6 +70,7 @@ to VxDs on Windows 98.
 | `VBoxGst/Hgcm.c` | HGCM requests |
 | `VBoxGst/Ioctl.c` | Device control dispatch |
 | `VBoxGst/VbglR0.c` | VMMDev request allocation (DMA common buffers) and submission |
+| `VBoxGst/Log.c` | Release logging through the backdoor port |
 | `VBoxTray/VBoxTray.c` | WinMain, tray icon, service threads |
 | `VBoxTray/Mouse.c` | Mouse pointer integration |
 | `VBoxTray/TimeSync.c` | Guest clock synchronization |

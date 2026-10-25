@@ -192,6 +192,7 @@ int VGDrvHgcmConnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, const
     pSession->aHGCMClientIds[iSlot] = RT_SUCCESS(rc) ? *pidClient : 0;
     vgdrvHgcmUnlockSessions(pDevExt);
 
+    VGDRV_LOG(("HGCM connect to %s: client %u, rc=%d\n", pszService, RT_SUCCESS(rc) ? *pidClient : 0, rc));
     return rc;
 }
 
@@ -240,6 +241,7 @@ int VGDrvHgcmDisconnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, UI
     vgdrvHgcmLockSessions(pDevExt);
     pSession->aHGCMClientIds[iSlot] = RT_SUCCESS(rc) ? 0 : idClient;
     vgdrvHgcmUnlockSessions(pDevExt);
+    VGDRV_LOG(("HGCM disconnect client %u, rc=%d\n", idClient, rc));
     return rc;
 }
 

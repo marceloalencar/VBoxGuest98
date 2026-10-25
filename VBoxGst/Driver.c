@@ -40,6 +40,8 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING pRegPath)
 {
     ULONG i;
 
+    VGDrvLogInit();
+
     /*
      * Check where we're running:
      *  - Windows 2000 and newer support WDM 1.10 and below (1, 0x10).
@@ -54,7 +56,12 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING pRegPath)
         g_enmVGDrvOsType = VBOXOSTYPE_WIN98;
 
     if (g_enmVGDrvOsType == VBOXOSTYPE_UNKNOWN)
+    {
+        VGDrvLogRel("not loading, Windows 2000 or newer needs the upstream driver\n");
         return STATUS_DRIVER_UNABLE_TO_LOAD;
+    }
+    VGDrvLogRel("VBoxGuest98 %s r%u on Windows %s\n", VBOX_VERSION_STRING, VBOX_SVN_REV,
+                g_enmVGDrvOsType == VBOXOSTYPE_WINME ? "ME" : "98");
 
     for (i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
         pDrvObj->MajorFunction[i] = vgdrvWinNotSupported;

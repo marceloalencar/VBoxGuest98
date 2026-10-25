@@ -9,6 +9,7 @@
  *  - Hgcm.c       HGCM connect/disconnect/call.
  *  - Ioctl.c      Device control and internal device control dispatch.
  *  - VbglR0.c     VMMDev request allocation and submission.
+ *  - Log.c        Release logging through the VMMDev backdoor port.
  */
 
 #ifndef VBOXGST_H
@@ -285,6 +286,22 @@ NTSTATUS NTAPI  vgdrvWinIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp);
 NTSTATUS NTAPI  vgdrvWinInternalIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp);
 NTSTATUS        vgdrvWinCompleteRequest(PIRP pIrp, NTSTATUS rcNt, ULONG_PTR cbInfo);
 void            vgdrvWinDeleteDevice(PVBOXGUESTDEVEXTWIN pDevExt);
+
+
+/*********************************************************************************************************************************
+*   Logging (Log.c)                                                                                                              *
+*********************************************************************************************************************************/
+
+void VGDrvLogInit(void);
+void VGDrvLogWrite(const char *pch, ULONG cch);
+void __cdecl VGDrvLogRel(const char *pszFormat, ...);
+
+/** Debug logging, checked builds only: VGDRV_LOG(("format\n", args)). */
+#if DBG
+# define VGDRV_LOG(a)   VGDrvLogRel a
+#else
+# define VGDRV_LOG(a)   do { } while (0)
+#endif
 
 
 /*********************************************************************************************************************************

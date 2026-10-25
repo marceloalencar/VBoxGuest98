@@ -582,6 +582,7 @@ unsigned __stdcall VBoxClipboardThread(void *pvUser)
     UINT32 idClient = 0;
     UINT32 uMsg;
     UINT32 fFormats;
+    int rcLast = VINF_SUCCESS;
     int rc;
 
     /* The window thread uses the client too, hence overlapped. */
@@ -594,9 +595,11 @@ unsigned __stdcall VBoxClipboardThread(void *pvUser)
     rc = VbglR3HgcmConnect(hDevice, VBOX_SHCL_SERVICE_NAME, &idClient);
     if (RT_FAILURE(rc))
     {
+        VBoxTrayLogRel("Clipboard: connecting to the service failed, rc=%d\n", rc);
         VbglR3Close(hDevice);
         return 1;
     }
+    VBoxTrayLogRel("Clipboard: connected, client %lu\n", idClient);
 
     EnterCriticalSection(&g_ClipCritSect);
     g_hClipDevice  = hDevice;
@@ -612,11 +615,18 @@ unsigned __stdcall VBoxClipboardThread(void *pvUser)
             /* VERR_INVALID_HANDLE: disconnected by VBoxClipboardStop. */
             if (g_fVBoxTrayShutdown || rc == VERR_INVALID_HANDLE)
                 break;
+            if (rc != rcLast)
+                VBoxTrayLogRel("Clipboard: waiting for host messages failed, rc=%d\n", rc);
+            rcLast = rc;
             Sleep(1000);
             continue;
         }
+        rcLast = VINF_SUCCESS;
         if (uMsg == VBOX_SHCL_HOST_MSG_QUIT)
+        {
+            VBoxTrayLogRel("Clipboard: the host asked to quit\n");
             break;
+        }
         vboxClipProcessHostMsg(hDevice, idClient, uMsg, fFormats);
     }
 

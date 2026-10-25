@@ -14,7 +14,8 @@ SOURCES= \
         Common.c \
         Hgcm.c \
         Ioctl.c \
-        VbglR0.c
+        VbglR0.c \
+        Log.c
 
 LIB=$(DDKROOT)\lib
 INCLUDE=$(DDKROOT)\inc\ddk;$(MSVCDIR)\include

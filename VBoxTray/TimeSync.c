@@ -56,8 +56,11 @@ static void vboxTimeSyncOnce(HANDLE hDevice)
     uHost.QuadPart = (msHost + VBOXTIMESYNC_EPOCH_DIFF_MS) * 10000;
     ftHost.dwLowDateTime  = uHost.LowPart;
     ftHost.dwHighDateTime = uHost.HighPart;
-    if (FileTimeToSystemTime(&ftHost, &stHost))
-        SetSystemTime(&stHost);
+    if (FileTimeToSystemTime(&ftHost, &stHost) && SetSystemTime(&stHost))
+        VBoxTrayLogRel("TimeSync: guest clock adjusted by %ld.%03lu s\n", (long)(cMsDiff / 1000),
+                       (unsigned long)((cMsDiff < 0 ? -cMsDiff : cMsDiff) % 1000));
+    else
+        VBoxTrayLogRel("TimeSync: setting the guest clock failed, error %lu\n", GetLastError());
 }
 
 /**

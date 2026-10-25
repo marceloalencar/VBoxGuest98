@@ -114,6 +114,19 @@ static int vbglR3DoIoCtl(HANDLE hDevice, DWORD uCmd, void *pvBuf, DWORD cbIn, DW
 }
 
 /**
+ * Writes text to the release log (VBox.log on the host).
+ *
+ * @returns VBox status code.
+ * @param   hDevice     The device handle.
+ * @param   pch         The text, lines ending with a newline.
+ * @param   cch         Its length, at most VBOXGUEST98_MAX_LOG_SIZE.
+ */
+int VbglR3WriteLog(HANDLE hDevice, const char *pch, DWORD cch)
+{
+    return vbglR3DoIoCtl(hDevice, IOCTL_VBOXGUEST98_WRITE_LOG, (void *)pch, cch, 0);
+}
+
+/**
  * Performs a raw VMMDev request.
  *
  * @returns VBox status code, the request status on success.

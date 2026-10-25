@@ -222,7 +222,8 @@ NTSTATUS NTAPI vgdrvWinIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
         return vgdrvWinCompleteRequest(pIrp, STATUS_INVALID_PARAMETER, 0);
 
     if (   pDevExtWin->enmDevState != VGDRVWINDEVSTATE_STARTED
-        && uCmd != IOCTL_VBOXGUEST98_GET_VERSION_INFO)
+        && uCmd != IOCTL_VBOXGUEST98_GET_VERSION_INFO
+        && uCmd != IOCTL_VBOXGUEST98_WRITE_LOG)
         return vgdrvWinCompleteRequest(pIrp, STATUS_DEVICE_NOT_READY, 0);
     if (!pvBuf && (cbIn || cbOut))
         return vgdrvWinCompleteRequest(pIrp, STATUS_INVALID_PARAMETER, 0);
@@ -280,6 +281,16 @@ NTSTATUS NTAPI vgdrvWinIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 
         case IOCTL_VBOXGUEST98_HGCM_CALL:
             rcNt = vgdrvIoCtlHgcmCall(pDevExt, pSession, pvBuf, cbIn, cbOut, &cbRet);
+            break;
+
+        case IOCTL_VBOXGUEST98_WRITE_LOG:
+            if (cbIn > VBOXGUEST98_MAX_LOG_SIZE)
+                rcNt = STATUS_INVALID_PARAMETER;
+            else
+            {
+                VGDrvLogWrite((const char *)pvBuf, cbIn);
+                rcNt = STATUS_SUCCESS;
+            }
             break;
 
         default:

@@ -27,6 +27,7 @@
 HANDLE VbglR3Open(void);
 HANDLE VbglR3OpenEx(BOOL fOverlapped);
 void   VbglR3Close(HANDLE hDevice);
+int    VbglR3WriteLog(HANDLE hDevice, const char *pch, DWORD cch);
 int    VbglR3ChangeFilterMask(HANDLE hDevice, UINT32 fOrMask, UINT32 fNotMask);
 int    VbglR3WaitForEvents(HANDLE hDevice, UINT32 fMask, UINT32 cMsTimeout, UINT32 *pfEvents);
 int    VbglR3SetMouseStatus(HANDLE hDevice, UINT32 fFeatures);
@@ -51,6 +52,10 @@ int    VbglR3GetDisplayChangeRequest(HANDLE hDevice, UINT32 *pcx, UINT32 *pcy, U
 extern volatile LONG g_fVBoxTrayShutdown;
 /** The hidden VBoxTray window (created before the services start). */
 extern HWND g_hwndVBoxTray;
+
+/** Writes a formatted line (wsprintf format, ending with a newline) to the
+ *  release log, prefixed with "VBoxTray: ".  Any thread may call it. */
+void __cdecl VBoxTrayLogRel(const char *pszFormat, ...);
 
 unsigned __stdcall VBoxMouseThread(void *pvUser);
 unsigned __stdcall VBoxTimeSyncThread(void *pvUser);

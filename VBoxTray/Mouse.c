@@ -77,6 +77,7 @@ unsigned __stdcall VBoxMouseThread(void *pvUser)
         rc = VbglR3SetMouseStatus(hDevice, VBOXMOUSE_GUEST_FEATURES);
     if (RT_FAILURE(rc))
     {
+        VBoxTrayLogRel("Mouse: setup failed, rc=%d\n", rc);
         VbglR3Close(hDevice);
         return 1;
     }

@@ -219,6 +219,7 @@ void VGDrvCommonReportPowerOff(PVBOXGUESTDEVEXT pDevExt)
     {
         pReq->header.rc = VERR_GENERAL_FAILURE;
         pReq->powerState = VMMDevPowerState_PowerOff;
+        VGDrvLogRel("Windows is shutting down, powering off the VM\n");
         VbglR0GRPerform(&pReq->header);
     }
 }
@@ -280,17 +281,22 @@ static void vgdrvHeartbeatInit(PVBOXGUESTDEVEXT pDevExt)
     rc = VbglR0GRAlloc(&pDevExt->pHeartbeatReq, sizeof(VMMDevRequestHeader), VMMDevReq_GuestHeartbeat);
     pDevExt->rcHeartbeat = rc;
     if (RT_FAILURE(rc))
+    {
+        VGDrvLogRel("heartbeat request allocation failed, rc=%d\n", rc);
         return;
+    }
 
     rc = vgdrvHeartbeatHostConfigure(TRUE, &cMsInterval);
     pDevExt->rcHeartbeat = rc;
     if (RT_FAILURE(rc) || cMsInterval == 0)
     {
+        VGDrvLogRel("heartbeat not started, rc=%d\n", rc);
         VbglR0GRFree(pDevExt->pHeartbeatReq);
         pDevExt->pHeartbeatReq = NULL;
         return;
     }
 
+    VGDrvLogRel("heartbeat every %u ms\n", cMsInterval);
     pDevExt->cMsHeartbeatInterval = cMsInterval;
     VbglR0GRPerform(pDevExt->pHeartbeatReq);
 
@@ -407,7 +413,13 @@ int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXT pDevExt, PDEVICE_OBJECT pPdo
     pDevExt->IOPortBase = IOPortBase;
     rc = VbglR0InitPrimary(pPdo, IOPortBase, pDevExt->pVMMDevMemory, &pDevExt->fHostFeatures);
     if (RT_FAILURE(rc))
+    {
+        VGDrvLogRel("VMMDev initialization failed, rc=%d\n", rc);
         return rc;
+    }
+    VGDrvLogRel("host %u.%u.%u r%u, features %#x, VMMDev memory %s\n",
+                g_vbgldata.hostVersion.major, g_vbgldata.hostVersion.minor, g_vbgldata.hostVersion.build,
+                g_vbgldata.hostVersion.revision, pDevExt->fHostFeatures, pDevExt->pVMMDevMemory ? "mapped" : "none");
 
     rc = VbglR0GRAlloc((VMMDevRequestHeader **)&pDevExt->pIrqAckEvents, sizeof(VMMDevEvents),
                        VMMDevReq_AcknowledgeEvents);
@@ -442,6 +454,7 @@ int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXT pDevExt, PDEVICE_OBJECT pPdo
         return VINF_SUCCESS;
     }
 
+    VGDrvLogRel("host setup failed, rc=%d\n", rc);
     pDevExt->uInitState = VBOXGUESTDEVEXT_INIT_STATE_RESOURCES; /* So the delete call below does its job. */
     VGDrvCommonDeleteDevExtResources(pDevExt);
     return rc;

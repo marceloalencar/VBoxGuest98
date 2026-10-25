@@ -240,7 +240,10 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PIRP pIrp)
 
     rcNt = vgdrvWinScanPCIResourceList(pDevExt, pStack->Parameters.StartDevice.AllocatedResourcesTranslated);
     if (!NT_SUCCESS(rcNt))
+    {
+        VGDrvLogRel("missing hardware resources, status %#x\n", rcNt);
         return rcNt;
+    }
 
     /*
      * Map physical address of VMMDev memory into MMIO region
@@ -248,7 +251,10 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PIRP pIrp)
      */
     rcNt = vgdrvWinMapVMMDevMemory(pDevExt, &cbMMIO);
     if (!NT_SUCCESS(rcNt))
+    {
+        VGDrvLogRel("mapping the VMMDev memory failed, status %#x\n", rcNt);
         return rcNt;
+    }
 
     rc = VGDrvCommonInitDevExtResources(&pDevExt->Core, pDevExt->pPhysicalDeviceObject,
                                         (USHORT)pDevExt->uIoPortPhysAddr.LowPart,
@@ -270,11 +276,18 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PIRP pIrp)
                                       pDevExt->fInterruptAffinity,    /* CPU affinity. */
                                       FALSE);                         /* Don't save FPU stack. */
             if (!NT_SUCCESS(rcNt))
+            {
+                VGDrvLogRel("connecting IRQ vector %u failed, status %#x\n", pDevExt->uInterruptVector, rcNt);
                 pDevExt->pInterruptObject = NULL;
+            }
         }
+        else
+            VGDrvLogRel("no interrupt assigned, events will not be delivered\n");
         if (NT_SUCCESS(rcNt))
         {
             vgdrvWinReadConfiguration(pDevExt);
+            VGDrvLogRel("started: I/O port %#x, IRQ level %u, PowerOffOnShutdown=%u\n",
+                        pDevExt->uIoPortPhysAddr.LowPart, pDevExt->uInterruptLevel, pDevExt->fPowerOffOnShutdown);
             if (pDevExt->InterfaceName.Buffer)
                 IoSetDeviceInterfaceState(&pDevExt->InterfaceName, TRUE);
             pDevExt->enmDevState = VGDRVWINDEVSTATE_STARTED;

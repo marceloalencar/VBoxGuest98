@@ -174,10 +174,13 @@ unsigned __stdcall VBoxStatsThread(void *pvUser)
     rc = VbglR3ChangeFilterMask(hDevice, VMMDEV_EVENT_STATISTICS_INTERVAL_CHANGE_REQUEST, 0);
     if (RT_FAILURE(rc))
     {
+        VBoxTrayLogRel("Stats: setup failed, rc=%d\n", rc);
         VbglR3Close(hDevice);
         return 1;
     }
     VbglR3StatQueryInterval(hDevice, &cMsInterval);
+    if (cMsInterval)
+        VBoxTrayLogRel("Stats: reporting every %lu ms\n", cMsInterval);
     cMsSinceReport = cMsInterval; /* First report right away, like upstream. */
 
     while (!g_fVBoxTrayShutdown)
@@ -198,7 +201,10 @@ unsigned __stdcall VBoxStatsThread(void *pvUser)
         rc = VbglR3WaitForEvents(hDevice, VMMDEV_EVENT_STATISTICS_INTERVAL_CHANGE_REQUEST, VBOXSTATS_POLL_MS, &fEvents);
         if (RT_SUCCESS(rc) && (fEvents & VMMDEV_EVENT_STATISTICS_INTERVAL_CHANGE_REQUEST))
         {
+            DWORD cMsPrev = cMsInterval;
             VbglR3StatQueryInterval(hDevice, &cMsInterval);
+            if (cMsInterval != cMsPrev)
+                VBoxTrayLogRel("Stats: reporting every %lu ms (0 = off)\n", cMsInterval);
             cMsSinceReport = cMsInterval; /* Report right away with the new interval. */
         }
         else

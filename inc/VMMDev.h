@@ -79,6 +79,11 @@ typedef enum VBOXOSTYPE
  *  VMMDEV_HVF_FAST_IRQ_ACK. */
 #define VMMDEV_PORT_OFF_REQUEST_FAST    8
 
+/** Backdoor logging port (absolute, iprt/log.h): bytes written to it appear
+ *  in VBox.log as "VMMDev: Guest Log:" lines.  The host buffers them up to
+ *  a newline.  Disabled when the VM has VMMDev "BackdoorLogDisabled" set. */
+#define RTLOG_DEBUG_PORT                0x504
+
 /** Version of the shared memory (VMMDevMemory) structure. */
 #define VMMDEV_MEMORY_VERSION           (1)
 /** Version of the guest <-> host interface (VMMDevReportGuestInfo). */
