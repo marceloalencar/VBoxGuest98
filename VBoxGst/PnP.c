@@ -390,7 +390,10 @@ NTSTATUS NTAPI vgdrvWinPnP(PDEVICE_OBJECT pDevObj, PIRP pIrp)
  * Handle the Power requests.
  *
  * Everything is passed down; on system shutdown the host is optionally told
- * to power off the VM (see VBOXGUESTDEVEXTWIN::fPowerOffOnShutdown).
+ * to power off the VM (see VBOXGUESTDEVEXTWIN::fPowerOffOnShutdown).  The
+ * condition is the one of upstream vgdrvNtNt5PlusPower, which does it
+ * unconditionally; here it stays opt-in until it is known when Windows 98
+ * sends this IRP during shutdown.
  *
  * @returns   NT status code
  * @param     pDevObj   device object
@@ -403,8 +406,9 @@ NTSTATUS NTAPI vgdrvWinPower(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 
     if (   pStack->MinorFunction == IRP_MN_SET_POWER
         && pStack->Parameters.Power.Type == SystemPowerState
-        && pStack->Parameters.Power.State.SystemState == PowerSystemShutdown
-        && pStack->Parameters.Power.ShutdownType == PowerActionShutdownOff
+        && pStack->Parameters.Power.State.SystemState >= PowerSystemShutdown
+        && (   pStack->Parameters.Power.ShutdownType == PowerActionShutdown
+            || pStack->Parameters.Power.ShutdownType == PowerActionShutdownOff)
         && pDevExt->fPowerOffOnShutdown
         && pDevExt->enmDevState == VGDRVWINDEVSTATE_STARTED)
         VGDrvCommonReportPowerOff(&pDevExt->Core);

@@ -1,0 +1,42 @@
+/** @file
+ * VBoxTray - Resources: icon and version information.
+ *
+ * VBoxTray.ico holds the 48x48, 32x32 and 16x16 images of
+ * src/VBox/Artwork/win/OSE/VirtualBox_win.ico from the VirtualBox open source
+ * repository (https://github.com/VirtualBox/virtualbox, GPL version 3), the
+ * icon the open source builds of the official VBoxTray use.
+ */
+
+#include <windows.h>
+#include "VBoxTrayRes.h"
+#include "VBoxGuest98.h"
+
+IDI_VBOXTRAY ICON "VBoxTray.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    VBOX_VERSION_MAJOR, VBOX_VERSION_MINOR, VBOX_VERSION_BUILD, 0
+ PRODUCTVERSION VBOX_VERSION_MAJOR, VBOX_VERSION_MINOR, VBOX_VERSION_BUILD, 0
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+ FILEFLAGS      0
+ FILEOS         VOS__WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName",      "VBoxGuest98\0"
+            VALUE "FileDescription",  "VirtualBox Guest Additions Tray Application\0"
+            VALUE "FileVersion",      VBOX_VERSION_STRING "\0"
+            VALUE "InternalName",     "VBoxTray\0"
+            VALUE "OriginalFilename", "VBoxTray.exe\0"
+            VALUE "ProductName",      "VirtualBox Guest Additions for Windows 98\0"
+            VALUE "ProductVersion",   VBOX_VERSION_STRING "\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END

@@ -163,7 +163,8 @@ int VbglR0GRAlloc(VMMDevRequestHeader **ppReq, ULONG cbReq, VMMDevRequestType en
     pReq->requestType = enmReqType;
     pReq->rc          = VERR_GENERAL_FAILURE;
     pReq->reserved1   = 0;
-    pReq->fRequestor  = VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV;
+    pReq->fRequestor  = VMMDEV_REQUESTOR_KERNEL        | VMMDEV_REQUESTOR_USR_DRV
+                      | VMMDEV_REQUESTOR_CON_DONT_KNOW | VMMDEV_REQUESTOR_TRUST_NOT_GIVEN;
 
     *ppReq = pReq;
     return VINF_SUCCESS;

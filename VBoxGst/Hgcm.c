@@ -4,8 +4,9 @@
  * HGCM requests usually complete asynchronously: the port write returns
  * VINF_HGCM_ASYNC_EXECUTE and the host later sets VBOX_HGCM_REQ_DONE in the
  * request and raises VMMDEV_EVENT_HGCM.  If a wait has to be abandoned the
- * request is cancelled; if the host does not confirm the cancellation the
- * request and its buffers are leaked rather than freed under the host's feet.
+ * request is cancelled; if the host neither confirms the cancellation nor
+ * completes the request shortly after, the request and its buffers are leaked
+ * rather than freed under the host's feet.
  *
  * Buffer parameters are bounced through nonpaged pool and passed as linear
  * addresses.  On Windows 98 the pool lives in the system arena, which is
@@ -81,39 +82,57 @@ static int vgdrvHgcmCancel(VMMDevHGCMRequestHeader *pHGCMReq)
 /**
  * Submits an HGCM request and waits for it to complete.
  *
+ * The completion/cancellation handling follows upstream's vbglR0HGCMInternalDoCall.
+ *
  * @returns VBox status code: the request status, or the HGCM result when the
  *          request itself succeeded.
  * @param   pDevExt     The device extension.
  * @param   pSession    The calling session.
  * @param   pHGCMReq    The request.
+ * @param   fRequestor  VMMDEV_REQUESTOR_XXX for the request header.
  * @param   cMsTimeout  Timeout in milliseconds or VBOXGUEST98_WAIT_INFINITE.
  * @param   pfLeak      Set to TRUE when the host may still access the
  *                      request (and its buffers), which then must not be freed.
  */
-static int vgdrvHgcmPerform(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession,
-                            VMMDevHGCMRequestHeader *pHGCMReq, UINT32 cMsTimeout, BOOLEAN *pfLeak)
+static int vgdrvHgcmPerform(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, VMMDevHGCMRequestHeader *pHGCMReq,
+                            UINT32 fRequestor, UINT32 cMsTimeout, BOOLEAN *pfLeak)
 {
     int rc;
+    int rc2;
 
     *pfLeak = FALSE;
+    pHGCMReq->header.fRequestor = fRequestor;
     pHGCMReq->fu32Flags = 0;
-    pHGCMReq->result    = VERR_GENERAL_FAILURE;
+    pHGCMReq->result    = VINF_SUCCESS;
 
     rc = VbglR0GRPerform(&pHGCMReq->header);
     if (rc == VINF_HGCM_ASYNC_EXECUTE)
     {
         rc = VGDrvCommonWaitForHgcm(pDevExt, pSession, pHGCMReq, cMsTimeout);
-        if (RT_FAILURE(rc))
+        if (pHGCMReq->fu32Flags & VBOX_HGCM_REQ_DONE)
+            rc = VINF_SUCCESS;
+        else
         {
-            vgdrvHgcmCancel(pHGCMReq);
-            if (   !(pHGCMReq->fu32Flags & (VBOX_HGCM_REQ_DONE | VBOX_HGCM_REQ_CANCELLED))
-                && RT_FAILURE(VGDrvCommonWaitForHgcm(pDevExt, pSession, pHGCMReq, 1000)))
-                *pfLeak = TRUE;
-            return rc;
+            /*
+             * Timed out or interrupted: cancel it, racing the completion.  Once
+             * the host accepts the cancellation it won't touch the request
+             * again, so it can be freed.  Otherwise give the host a moment to
+             * complete it and leak it if it doesn't.
+             */
+            rc2 = vgdrvHgcmCancel(pHGCMReq);
+            if (RT_SUCCESS(rc))
+                rc = VERR_INTERRUPTED;
+            if (RT_SUCCESS(rc2))
+                pHGCMReq->fu32Flags |= VBOX_HGCM_REQ_CANCELLED;
+            else
+            {
+                VGDrvCommonWaitForHgcm(pDevExt, pSession, pHGCMReq, rc2 == VERR_NOT_FOUND ? 500 : 2000);
+                if (pHGCMReq->fu32Flags & VBOX_HGCM_REQ_DONE)
+                    rc = VINF_SUCCESS;
+                else
+                    *pfLeak = TRUE;
+            }
         }
-        if (pHGCMReq->fu32Flags & VBOX_HGCM_REQ_CANCELLED)
-            return VERR_INTERRUPTED;
-        rc = VINF_SUCCESS;
     }
     if (RT_FAILURE(rc))
         return rc;
@@ -162,7 +181,7 @@ int VGDrvHgcmConnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, const
             pReq->loc.u.host.achName[off] = pszService[off];
         pReq->u32ClientID = 0;
 
-        rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, VBOXGUEST98_WAIT_INFINITE, &fLeak);
+        rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, pSession->fRequestor, VBOXGUEST98_WAIT_INFINITE, &fLeak);
         if (RT_SUCCESS(rc))
             *pidClient = pReq->u32ClientID;
         if (!fLeak)
@@ -178,8 +197,11 @@ int VGDrvHgcmConnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, const
 
 /**
  * Disconnects from an HGCM service without checking ownership.
+ *
+ * @param   fRequestor  VMMDEV_REQUESTOR_XXX for the request.
  */
-static int vgdrvHgcmDisconnectWorker(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, UINT32 idClient)
+static int vgdrvHgcmDisconnectWorker(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, UINT32 idClient,
+                                     UINT32 fRequestor)
 {
     VMMDevHGCMDisconnect *pReq;
     BOOLEAN fLeak = FALSE;
@@ -187,7 +209,7 @@ static int vgdrvHgcmDisconnectWorker(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION
     if (RT_SUCCESS(rc))
     {
         pReq->u32ClientID = idClient;
-        rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, VBOXGUEST98_WAIT_INFINITE, &fLeak);
+        rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, fRequestor, VBOXGUEST98_WAIT_INFINITE, &fLeak);
         if (!fLeak)
             VbglR0GRFree(&pReq->header.header);
     }
@@ -213,7 +235,7 @@ int VGDrvHgcmDisconnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, UI
     if (iSlot < 0)
         return VERR_INVALID_HANDLE;
 
-    rc = vgdrvHgcmDisconnectWorker(pDevExt, pSession, idClient);
+    rc = vgdrvHgcmDisconnectWorker(pDevExt, pSession, idClient, pSession->fRequestor);
 
     vgdrvHgcmLockSessions(pDevExt);
     pSession->aHGCMClientIds[iSlot] = RT_SUCCESS(rc) ? 0 : idClient;
@@ -223,6 +245,9 @@ int VGDrvHgcmDisconnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, UI
 
 /**
  * Disconnects all HGCM clients of a closing session.  PASSIVE_LEVEL.
+ *
+ * Like upstream VGDrvCommonCloseSession, the driver itself is the requestor
+ * here since it is cleaning up.
  */
 void VGDrvHgcmDisconnectSessionClients(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession)
 {
@@ -231,7 +256,7 @@ void VGDrvHgcmDisconnectSessionClients(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSI
     {
         UINT32 idClient = pSession->aHGCMClientIds[i];
         if (idClient != 0 && idClient != ~0U)
-            vgdrvHgcmDisconnectWorker(pDevExt, pSession, idClient);
+            vgdrvHgcmDisconnectWorker(pDevExt, pSession, idClient, VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV);
         pSession->aHGCMClientIds[i] = 0;
     }
 }
@@ -379,7 +404,7 @@ int VGDrvHgcmCall(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, VBOXGUES
         }
     }
 
-    rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, pCall->cMsTimeout, &fLeak);
+    rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, pSession->fRequestor, pCall->cMsTimeout, &fLeak);
 
     /*
      * Copy back values and output buffers.

@@ -7,6 +7,7 @@
  */
 
 #include "VBoxTray.h"
+#include "VBoxTrayRes.h"
 #include <shellapi.h>
 #include <process.h>
 #include <string.h>
@@ -67,6 +68,8 @@ static VBOXTRAYSERVICE g_aServices[] =
 };
 
 static HINSTANCE g_hInstance;
+/** The small (tray) icon. */
+static HICON g_hIconSmall;
 /** "TaskbarCreated" message, sent when Explorer restarts. */
 static UINT g_uMsgTaskbarCreated;
 
@@ -84,7 +87,7 @@ static void vboxTrayIcon(HWND hwnd, DWORD dwMessage)
     Nid.uID              = VBOXTRAY_ICON_ID;
     Nid.uFlags           = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     Nid.uCallbackMessage = WM_VBOXTRAY_NOTIFYICON;
-    Nid.hIcon            = LoadIcon(NULL, IDI_APPLICATION);
+    Nid.hIcon            = g_hIconSmall;
     lstrcpyn(Nid.szTip, "VirtualBox Guest Additions " VBOX_VERSION_STRING, 64);
     Shell_NotifyIcon(dwMessage, &Nid);
 }
@@ -249,10 +252,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
 
     g_uMsgTaskbarCreated = RegisterWindowMessage("TaskbarCreated");
 
+    /* The tray wants the 16x16 image; LoadIcon would scale down the 32x32 one. */
+    g_hIconSmall = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_VBOXTRAY), IMAGE_ICON,
+                                    GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+    if (!g_hIconSmall)
+        g_hIconSmall = LoadIcon(NULL, IDI_APPLICATION);
+
     memset(&WndCls, 0, sizeof(WndCls));
     WndCls.lpfnWndProc   = vboxTrayWndProc;
     WndCls.hInstance     = hInstance;
-    WndCls.hIcon         = LoadIcon(NULL, IDI_APPLICATION);
+    WndCls.hIcon         = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_VBOXTRAY));
     WndCls.hCursor       = LoadCursor(NULL, IDC_ARROW);
     WndCls.lpszClassName = VBOXTRAY_WND_CLASS;
     if (!RegisterClass(&WndCls))
@@ -285,6 +294,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
     vboxTrayReportStatus(VBoxGuestFacilityStatus_Terminated);
 
     UnregisterClass(VBOXTRAY_WND_CLASS, hInstance);
+    DestroyIcon(g_hIconSmall); /* No-op for the shared fallback icon. */
     if (hMutex)
         CloseHandle(hMutex);
     return 0;

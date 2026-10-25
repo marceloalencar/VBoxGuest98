@@ -2,9 +2,13 @@
  * VMMDev - Guest <-> VirtualBox host protocol definitions.
  *
  * Subset of include/VBox/VMMDev.h, include/VBox/VMMDevCoreTypes.h,
- * include/VBox/HostServices/GuestPropertySvc.h and include/iprt/err.h from
- * VirtualBox 6.1.6, rewritten in C89 so it builds with Visual C++ 6.0 and the
- * Windows 2000 DDK.
+ * include/VBox/ostypes.h, include/VBox/HostServices/GuestPropertySvc.h,
+ * include/VBox/HostServices/VBoxClipboardSvc.h,
+ * include/VBox/GuestHost/SharedClipboard.h, include/VBox/err.h and
+ * include/iprt/err.h from VirtualBox 7.2.22 (r175245), rewritten in C89 so it
+ * builds with Visual C++ 6.0 and the Windows 2000 DDK.  Values and structure
+ * sizes were checked against those headers; the sizes are also enforced at
+ * compile time at the end of this file.
  *
  * This header has no kernel dependencies and is shared by the driver
  * (VBoxGst) and user mode tools (VBGTest).  Include <wdm.h> or <windows.h>
@@ -51,6 +55,8 @@
 typedef enum VBOXOSTYPE
 {
     VBOXOSTYPE_UNKNOWN    = 0,
+    VBOXOSTYPE_DOS        = 0x10000,
+    VBOXOSTYPE_WIN31      = 0x15000,
     VBOXOSTYPE_WIN95      = 0x21000,
     VBOXOSTYPE_WIN98      = 0x22000,
     VBOXOSTYPE_WINME      = 0x23000,
@@ -68,6 +74,10 @@ typedef enum VBOXOSTYPE
 
 /** Port for generic request interface (relative offset). */
 #define VMMDEV_PORT_OFF_REQUEST         0
+/** Port for fast IRQ acknowledging: reading it acknowledges and returns the
+ *  pending events, UINT32_MAX on failure.  Only if the host reports
+ *  VMMDEV_HVF_FAST_IRQ_ACK. */
+#define VMMDEV_PORT_OFF_REQUEST_FAST    8
 
 /** Version of the shared memory (VMMDevMemory) structure. */
 #define VMMDEV_MEMORY_VERSION           (1)
@@ -145,6 +155,9 @@ typedef enum VMMDevRequestType
     VMMDevReq_ReportGuestCapabilities   =  55,
     VMMDevReq_SetGuestCapabilities      =  56,
     VMMDevReq_VideoModeSupported2       =  57,
+    VMMDevReq_GetDisplayChangeRequestEx =  80,
+    VMMDevReq_GetDisplayChangeRequestMulti = 81,
+    VMMDevReq_GetDisplayChangeRequestMulti2 = 82,
     VMMDevReq_ReportGuestInfo2          =  58,
     VMMDevReq_ReportGuestStatus         =  59,
     VMMDevReq_HGCMConnect               =  60,
@@ -168,21 +181,61 @@ typedef enum VMMDevRequestType
     VMMDevReq_LogString                 = 200,
     VMMDevReq_GetCpuHotPlugRequest      = 210,
     VMMDevReq_SetCpuHotPlugStatus       = 211,
+    VMMDevReq_RegisterSharedModule      = 212,
+    VMMDevReq_UnregisterSharedModule    = 213,
+    VMMDevReq_CheckSharedModules        = 214,
+    VMMDevReq_GetPageSharingStatus      = 215,
+    VMMDevReq_DebugIsPageShared         = 216,
     VMMDevReq_GetSessionId              = 217,
     VMMDevReq_WriteCoreDump             = 218,
     VMMDevReq_GuestHeartbeat            = 219,
     VMMDevReq_HeartbeatConfigure        = 220,
+    VMMDevReq_NtBugCheck                = 221,
+    VMMDevReq_VideoUpdateMonitorPositions = 222,
+    VMMDevReq_GetMouseStatusEx          = 223,
+    VMMDevReq_GetHostGraphicsCapability = 224,
     VMMDevReq_SizeHack                  = 0x7fffffff
 } VMMDevRequestType;
 
 /** @name VMMDevRequestHeader::fRequestor values.
  * Only used by the host when VBOXGSTINFO2_F_REQUESTOR_INFO was reported.
  * @{ */
+/** User of the requestor (VMMDEV_REQUESTOR_USR_MASK). */
+#define VMMDEV_REQUESTOR_USR_NOT_GIVEN              (0x00000000U)
+#define VMMDEV_REQUESTOR_USR_DRV                    (0x00000001U)
+#define VMMDEV_REQUESTOR_USR_DRV_OTHER              (0x00000002U)
+#define VMMDEV_REQUESTOR_USR_ROOT                   (0x00000003U)
+#define VMMDEV_REQUESTOR_USR_SYSTEM                 (0x00000004U)
+#define VMMDEV_REQUESTOR_USR_RESERVED1              (0x00000005U)
+#define VMMDEV_REQUESTOR_USR_USER                   (0x00000006U)
+#define VMMDEV_REQUESTOR_USR_GUEST                  (0x00000007U)
+#define VMMDEV_REQUESTOR_USR_MASK                   (0x00000007U)
+/** Kernel or user mode requestor. */
 #define VMMDEV_REQUESTOR_KERNEL                     (0x00000000U)
 #define VMMDEV_REQUESTOR_USERMODE                   (0x00000008U)
-#define VMMDEV_REQUESTOR_USR_DRV                    (0x00000001U)
-#define VMMDEV_REQUESTOR_USR_ROOT                   (0x00000003U)
+/** Whether the requestor is on the physical console (VMMDEV_REQUESTOR_CON_MASK). */
 #define VMMDEV_REQUESTOR_CON_DONT_KNOW              (0x00000000U)
+#define VMMDEV_REQUESTOR_CON_NO                     (0x00000010U)
+#define VMMDEV_REQUESTOR_CON_YES                    (0x00000020U)
+#define VMMDEV_REQUESTOR_CON_USER                   (0x00000030U)
+#define VMMDEV_REQUESTOR_CON_MASK                   (0x00000030U)
+/** Group membership. */
+#define VMMDEV_REQUESTOR_GRP_VBOX                   (0x00000080U)
+#define VMMDEV_REQUESTOR_GRP_WHEEL                  (0x00000100U)
+/** Trust level (VMMDEV_REQUESTOR_TRUST_MASK). */
+#define VMMDEV_REQUESTOR_TRUST_NOT_GIVEN            (0x00000000U)
+#define VMMDEV_REQUESTOR_TRUST_UNTRUSTED            (0x00001000U)
+#define VMMDEV_REQUESTOR_TRUST_LOW                  (0x00002000U)
+#define VMMDEV_REQUESTOR_TRUST_MEDIUM               (0x00003000U)
+#define VMMDEV_REQUESTOR_TRUST_MEDIUM_PLUS          (0x00004000U)
+#define VMMDEV_REQUESTOR_TRUST_HIGH                 (0x00005000U)
+#define VMMDEV_REQUESTOR_TRUST_SYSTEM               (0x00006000U)
+#define VMMDEV_REQUESTOR_TRUST_PROTECTED            (0x00007000U)
+#define VMMDEV_REQUESTOR_TRUST_MASK                 (0x00007000U)
+/** Requestor uses the less trusted user device node. */
+#define VMMDEV_REQUESTOR_USER_DEVICE                (0x00008000U)
+/** There is no user device node (true for Windows 98). */
+#define VMMDEV_REQUESTOR_NO_USER_DEVICE             (0x00010000U)
 /** @} */
 
 /** Generic VMMDev request header. */
@@ -211,8 +264,15 @@ typedef struct VMMDevRequestHeader
 #define VMMDEV_MOUSE_NEW_PROTOCOL                       (1U << 4)
 #define VMMDEV_MOUSE_HOST_RECHECKS_NEEDS_HOST_CURSOR    (1U << 5)
 #define VMMDEV_MOUSE_HOST_HAS_ABS_DEV                   (1U << 6)
+#define VMMDEV_MOUSE_GUEST_USES_FULL_STATE_PROTOCOL     (1U << 7)
+#define VMMDEV_MOUSE_HOST_SUPPORTS_FULL_STATE_PROTOCOL  (1U << 8)
+#define VMMDEV_MOUSE_MASK                               (0x000001ffU)
+/** Guest changes the host is notified about. */
+#define VMMDEV_MOUSE_NOTIFY_HOST_MASK \
+    (VMMDEV_MOUSE_GUEST_CAN_ABSOLUTE | VMMDEV_MOUSE_GUEST_NEEDS_HOST_CURSOR)
 /** The mask of the bits the guest is allowed to change. */
-#define VMMDEV_MOUSE_GUEST_MASK                         (0x00000015U)
+#define VMMDEV_MOUSE_GUEST_MASK \
+    (VMMDEV_MOUSE_NOTIFY_HOST_MASK | VMMDEV_MOUSE_NEW_PROTOCOL | VMMDEV_MOUSE_GUEST_USES_FULL_STATE_PROTOCOL)
 /** @} */
 
 /** Absolute pointer range reported by the host (0..0xffff). */
@@ -231,6 +291,11 @@ typedef struct
 /** @name Host feature flags (VMMDevReqHostVersion::features).
  * @{ */
 #define VMMDEV_HVF_HGCM_PHYS_PAGE_LIST                  (1U << 0)
+#define VMMDEV_HVF_HGCM_EMBEDDED_BUFFERS                (1U << 1)
+#define VMMDEV_HVF_HGCM_CONTIGUOUS_PAGE_LIST            (1U << 2)
+#define VMMDEV_HVF_HGCM_NO_BOUNCE_PAGE_LIST             (1U << 3)
+/** Events can be acknowledged by reading VMMDEV_PORT_OFF_REQUEST_FAST. */
+#define VMMDEV_HVF_FAST_IRQ_ACK                         (1U << 31)
 /** @} */
 
 /** VMMDevReq_GetHostVersion. */
@@ -496,12 +561,14 @@ typedef struct
     UINT32 cParms;
 } VMMDevHGCMCall;
 
-/** VMMDevReq_HGCMCancel2. */
+/** VMMDevReq_HGCMCancel2.  The address grew to 64 bits in VirtualBox 7.1;
+ *  older hosts check for a minimum size and ignore the upper half, so this
+ *  form works with all hosts (upstream's VMMDevHGCMCancel2Old was 24+4). */
 typedef struct
 {
     VMMDevRequestHeader header;
     /** Physical address of the request to cancel. */
-    UINT32 physReqToCancel;
+    UINT64 physReqToCancel;
 } VMMDevHGCMCancel2;
 
 /** Upper limit on the parameter count we accept for an HGCM call. */
@@ -554,6 +621,8 @@ typedef struct
 #define VBOX_SHCL_FMT_UNICODETEXT                       (1U << 0)
 #define VBOX_SHCL_FMT_BITMAP                            (1U << 1)
 #define VBOX_SHCL_FMT_HTML                              (1U << 2)
+#define VBOX_SHCL_FMT_URI_LIST                          (1U << 3)
+#define VBOX_SHCL_FMT_VALID_MASK                        (0x0000000fU)
 /** @} */
 
 #pragma pack(pop)
@@ -561,8 +630,8 @@ typedef struct
 /** Compile time size check (C89: a negative array size fails to compile). */
 #define VMMDEV_ASSERT_SIZE(type, cb)    typedef char type##_SizeCheck[sizeof(type) == (cb) ? 1 : -1]
 
-/* Sizes from the AssertCompileSize statements in upstream VMMDev.h; the host
-   checks most of them. */
+/* Sizes from the AssertCompileSize statements in VirtualBox 7.2.22
+   include/VBox/VMMDev.h; the host checks most of them. */
 VMMDEV_ASSERT_SIZE(VMMDevRequestHeader, 24);
 VMMDEV_ASSERT_SIZE(VMMDevReqMouseStatus, 24+12);
 VMMDEV_ASSERT_SIZE(VMMDevReqHostVersion, 24+16);
@@ -580,6 +649,6 @@ VMMDEV_ASSERT_SIZE(VMMDevHGCMConnect, 32+132+4);
 VMMDEV_ASSERT_SIZE(VMMDevHGCMDisconnect, 32+4);
 VMMDEV_ASSERT_SIZE(VMMDevHGCMCall, 32+12);
 VMMDEV_ASSERT_SIZE(HGCMFunctionParameter32, 4+8);
-VMMDEV_ASSERT_SIZE(VMMDevHGCMCancel2, 24+4);
+VMMDEV_ASSERT_SIZE(VMMDevHGCMCancel2, 24+8);
 
 #endif /* !VBOXGUEST98_VMMDEV_H */

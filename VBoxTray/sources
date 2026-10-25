@@ -11,7 +11,8 @@ SOURCES= \
         Mouse.c \
         TimeSync.c \
         Clipboard.c \
-        VbglR3.c
+        VbglR3.c \
+        VBoxTray.rc
 
 TARGETLIBS= \
         $(SDK_LIB_PATH)\setupapi.lib \
@@ -24,5 +25,5 @@ INCLUDE=$(MSVCDIR)\include
 MSC_WARNING_LEVEL=/W3 /WX
 
 USER_C_FLAGS=/MT
-C_DEFINES=/DW32 /DWIN32
+C_DEFINES=/DW32
 USE_MSVCRT=1

@@ -18,6 +18,16 @@
 #ifndef VBOXGUEST98_H
 #define VBOXGUEST98_H
 
+/** VirtualBox version the guest additions track.  These are also used by the
+ *  resource scripts, which only see this part of the header (RC_INVOKED). */
+#define VBOX_VERSION_MAJOR              7
+#define VBOX_VERSION_MINOR              2
+#define VBOX_VERSION_BUILD              22
+#define VBOX_SVN_REV                    175245
+#define VBOX_VERSION_STRING             "7.2.22"
+
+#ifndef RC_INVOKED
+
 #include "VMMDev.h"
 
 #pragma pack(push, 4)
@@ -25,13 +35,6 @@
 /*********************************************************************************************************************************
 *   Versions and names                                                                                                           *
 *********************************************************************************************************************************/
-
-/** VirtualBox version the guest additions track. */
-#define VBOX_VERSION_MAJOR              (6)
-#define VBOX_VERSION_MINOR              (1)
-#define VBOX_VERSION_BUILD              (6)
-#define VBOX_SVN_REV                    (137129)
-#define VBOX_VERSION_STRING             "6.1.6"
 
 /** Version of this interface, high word is major (incompatible changes). */
 #define VBOXGUEST98_IOCTL_VERSION       (0x00010001U)
@@ -241,5 +244,7 @@ typedef struct VBOXGUEST98MOUSENOTIFY
 } VBOXGUEST98MOUSENOTIFY;
 
 #pragma pack(pop)
+
+#endif /* !RC_INVOKED */
 
 #endif /* !VBOXGUEST98_H */

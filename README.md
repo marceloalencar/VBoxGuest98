@@ -1,5 +1,5 @@
 # VBoxGuest98
-VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows Driver Model 1.0. Tracks VirtualBox 6.1.6 source code.
+VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows Driver Model 1.0. Tracks VirtualBox 7.2.22 (r175245) source code.
 
 ## Components
 **VBoxGst**: PCI driver for VirtualBox Guest Device (`PCI\VEN_80EE&DEV_CAFE`)
@@ -55,6 +55,7 @@ to VxDs on Windows 98.
 | `VBoxTray/TimeSync.c` | Guest clock synchronization |
 | `VBoxTray/Clipboard.c` | Shared clipboard (text) |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode |
+| `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 
 The driver must only import functions NTKERN.VXD provides: check with
 `dumpbin /imports VBoxGst.sys` after adding new kernel calls.

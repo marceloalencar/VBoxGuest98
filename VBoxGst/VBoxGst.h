@@ -88,6 +88,8 @@ typedef struct VBOXGUESTSESSION
     LIST_ENTRY ListEntry;
     /** Whether this session belongs to a user mode handle. */
     BOOLEAN fUserSession;
+    /** VMMDEV_REQUESTOR_XXX put in every request made for this session. */
+    UINT32 fRequestor;
     /** Events this session wants to receive. */
     UINT32 fEventFilter;
     /** Guest capabilities this session reports. */

@@ -105,9 +105,7 @@ static NTSTATUS vgdrvIoCtlVMMDevRequest(PVBOXGUESTSESSION pSession, PVOID pvBuf,
     RtlCopyMemory(pReq, pReqIn, cbReq);
     pReq->rc        = VERR_GENERAL_FAILURE;
     pReq->reserved1 = 0;
-    pReq->fRequestor = pSession->fUserSession
-                     ? VMMDEV_REQUESTOR_USERMODE | VMMDEV_REQUESTOR_USR_ROOT | VMMDEV_REQUESTOR_CON_DONT_KNOW
-                     : VMMDEV_REQUESTOR_KERNEL | VMMDEV_REQUESTOR_USR_DRV;
+    pReq->fRequestor = pSession->fRequestor;
 
     VbglR0GRPerform(pReq);
 

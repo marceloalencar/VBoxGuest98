@@ -733,6 +733,20 @@ int VGDrvCommonCreateSession(PVBOXGUESTDEVEXT pDevExt, BOOLEAN fUserSession, PVB
     RtlZeroMemory(pSession, sizeof(*pSession));
     pSession->fUserSession = fUserSession;
 
+    /*
+     * Requestor flags, as upstream (vgdrvNtCalcRequestorFlags and
+     * VGDrvCommonCreateKernelSession).  Windows 98 has no user accounts to
+     * tell apart and a single device node, so every user mode client counts
+     * as an administrator on the trusted device.
+     */
+    if (fUserSession)
+        pSession->fRequestor = VMMDEV_REQUESTOR_USERMODE       | VMMDEV_REQUESTOR_USR_ROOT
+                             | VMMDEV_REQUESTOR_CON_DONT_KNOW  | VMMDEV_REQUESTOR_TRUST_NOT_GIVEN
+                             | VMMDEV_REQUESTOR_NO_USER_DEVICE;
+    else
+        pSession->fRequestor = VMMDEV_REQUESTOR_KERNEL         | VMMDEV_REQUESTOR_USR_DRV_OTHER
+                             | VMMDEV_REQUESTOR_CON_DONT_KNOW  | VMMDEV_REQUESTOR_TRUST_NOT_GIVEN;
+
     vgdrvAcquireSessionMutex(pDevExt);
     InsertTailList(&pDevExt->SessionList, &pSession->ListEntry);
     if (fUserSession)
