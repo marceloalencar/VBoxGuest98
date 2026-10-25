@@ -1,6 +1,7 @@
 /** @file
  * VBoxTray - Drag and drop OLE objects (IDataObject, IEnumFORMATETC,
- * IDropSource), written in C with hand made virtual tables.
+ * IDropSource for host to guest, IDropTarget for guest to host), written in
+ * C with hand made virtual tables.
  *
  * The data object offers a single format.  It is created when the host
  * drag enters the guest, but the data only arrives after the drop, from the
@@ -519,4 +520,140 @@ void VBoxDnDDropSourceAbort(IDropSource *pIface)
 DWORD VBoxDnDDropSourceGetEffect(IDropSource *pIface)
 {
     return ((VBOXDNDDROPSOURCE *)pIface)->dwEffect;
+}
+
+
+/*********************************************************************************************************************************
+*   IDropTarget                                                                                                                  *
+*********************************************************************************************************************************/
+
+/** IDropTarget implementation, registered on the proxy window for guest to
+ *  host drags. */
+typedef struct VBOXDNDDROPTARGET
+{
+    IDropTarget      Iface;
+    LONG             cRefs;
+    /** The format of the drag over us (CF_HDROP, CF_TEXT), 0 if none we take. */
+    CLIPFORMAT       cfFormat;
+} VBOXDNDDROPTARGET;
+
+/**
+ * Picks the format to take from a data object: files first, then text.
+ */
+static CLIPFORMAT vboxDnDDropTgtPickFormat(IDataObject *pDataObj)
+{
+    static const CLIPFORMAT s_acf[] = { CF_HDROP, CF_TEXT };
+    FORMATETC FormatEtc;
+    unsigned i;
+
+    for (i = 0; i < sizeof(s_acf) / sizeof(s_acf[0]); i++)
+    {
+        FormatEtc.cfFormat = s_acf[i];
+        FormatEtc.ptd      = NULL;
+        FormatEtc.dwAspect = DVASPECT_CONTENT;
+        FormatEtc.lindex   = -1;
+        FormatEtc.tymed    = TYMED_HGLOBAL;
+        if (pDataObj->lpVtbl->QueryGetData(pDataObj, &FormatEtc) == S_OK)
+            return s_acf[i];
+    }
+    return 0;
+}
+
+/** Only copying is offered, so the guest source never deletes anything. */
+static DWORD vboxDnDDropTgtEffect(VBOXDNDDROPTARGET *pThis, DWORD dwAllowed)
+{
+    return pThis->cfFormat && (dwAllowed & DROPEFFECT_COPY) ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+}
+
+static HRESULT STDMETHODCALLTYPE vboxDnDDropTgtQueryInterface(IDropTarget *pIface, REFIID riid, void **ppv)
+{
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IDropTarget))
+    {
+        *ppv = pIface;
+        pIface->lpVtbl->AddRef(pIface);
+        return S_OK;
+    }
+    *ppv = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE vboxDnDDropTgtAddRef(IDropTarget *pIface)
+{
+    return (ULONG)InterlockedIncrement(&((VBOXDNDDROPTARGET *)pIface)->cRefs);
+}
+
+static ULONG STDMETHODCALLTYPE vboxDnDDropTgtRelease(IDropTarget *pIface)
+{
+    VBOXDNDDROPTARGET *pThis = (VBOXDNDDROPTARGET *)pIface;
+    LONG cRefs = InterlockedDecrement(&pThis->cRefs);
+    if (cRefs == 0)
+        free(pThis);
+    return (ULONG)cRefs;
+}
+
+static HRESULT STDMETHODCALLTYPE vboxDnDDropTgtDragEnter(IDropTarget *pIface, IDataObject *pDataObj, DWORD grfKeyState,
+                                                         POINTL pt, DWORD *pdwEffect)
+{
+    VBOXDNDDROPTARGET *pThis = (VBOXDNDDROPTARGET *)pIface;
+
+    if (!pDataObj || !pdwEffect)
+        return E_INVALIDARG;
+    pThis->cfFormat = vboxDnDDropTgtPickFormat(pDataObj);
+    *pdwEffect = vboxDnDDropTgtEffect(pThis, *pdwEffect);
+    VBoxDnDGhOnDragEnter(pThis->cfFormat, pDataObj);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE vboxDnDDropTgtDragOver(IDropTarget *pIface, DWORD grfKeyState, POINTL pt, DWORD *pdwEffect)
+{
+    if (!pdwEffect)
+        return E_INVALIDARG;
+    *pdwEffect = vboxDnDDropTgtEffect((VBOXDNDDROPTARGET *)pIface, *pdwEffect);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE vboxDnDDropTgtDragLeave(IDropTarget *pIface)
+{
+    ((VBOXDNDDROPTARGET *)pIface)->cfFormat = 0;
+    VBoxDnDGhOnDragLeave();
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE vboxDnDDropTgtDrop(IDropTarget *pIface, IDataObject *pDataObj, DWORD grfKeyState,
+                                                    POINTL pt, DWORD *pdwEffect)
+{
+    VBOXDNDDROPTARGET *pThis = (VBOXDNDDROPTARGET *)pIface;
+
+    if (!pDataObj || !pdwEffect)
+        return E_INVALIDARG;
+    /* The data was taken at DragEnter already; this only ends the guest drag. */
+    *pdwEffect = vboxDnDDropTgtEffect(pThis, *pdwEffect);
+    if (!VBoxDnDGhOnDrop())
+        *pdwEffect = DROPEFFECT_NONE;
+    pThis->cfFormat = 0;
+    return S_OK;
+}
+
+static IDropTargetVtbl g_vboxDnDDropTgtVtbl =
+{
+    vboxDnDDropTgtQueryInterface,
+    vboxDnDDropTgtAddRef,
+    vboxDnDDropTgtRelease,
+    vboxDnDDropTgtDragEnter,
+    vboxDnDDropTgtDragOver,
+    vboxDnDDropTgtDragLeave,
+    vboxDnDDropTgtDrop
+};
+
+/**
+ * Creates the drop target, with a reference held for the caller.
+ */
+IDropTarget *VBoxDnDDropTargetCreate(void)
+{
+    VBOXDNDDROPTARGET *pThis = (VBOXDNDDROPTARGET *)calloc(1, sizeof(*pThis));
+    if (!pThis)
+        return NULL;
+    pThis->Iface.lpVtbl = &g_vboxDnDDropTgtVtbl;
+    pThis->cRefs        = 1;
+    return &pThis->Iface;
 }

@@ -45,8 +45,10 @@
 #define VERR_OPEN_FAILED                (-101)
 #define VERR_PATH_NOT_FOUND             (-103)
 #define VERR_INVALID_NAME               (-104)
+#define VERR_READ_ERROR                 (-111)
 #define VERR_WRITE_ERROR                (-112)
 #define VERR_FILENAME_TOO_LONG          (-120)
+#define VERR_NO_DATA                    (-304)
 #define VERR_INTERNAL_ERROR             (-225)
 #define VINF_BUFFER_OVERFLOW            (41)
 #define VINF_HGCM_ASYNC_EXECUTE         (2903)
@@ -766,6 +768,16 @@ typedef struct
 #define GUEST_DND_FN_GH_SND_DATA                        501
 #define GUEST_DND_FN_EVT_ERROR                          502
 #define GUEST_DND_FN_GH_SND_DATA_HDR                    503
+#define GUEST_DND_FN_GH_SND_DIR                         700
+#define GUEST_DND_FN_GH_SND_FILE_DATA                   701
+#define GUEST_DND_FN_GH_SND_FILE_HDR                    702
+/** @} */
+
+/** @name Object modes sent with GUEST_DND_FN_GH_SND_DIR/FILE_HDR (RTFMODE:
+ *  type and Unix permissions; the host refuses files with mode 0).
+ * @{ */
+#define VBOX_DND_MODE_DIR                               0x41ed  /* RTFS_TYPE_DIRECTORY | 0755 */
+#define VBOX_DND_MODE_FILE                              0x81a4  /* RTFS_TYPE_FILE | 0644 */
 /** @} */
 
 /** Protocol version sent with GUEST_DND_FN_CONNECT (deprecated since 6.1). */

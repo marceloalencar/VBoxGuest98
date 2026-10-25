@@ -30,17 +30,25 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
   VBoxTray adds it (`MODES` key under the display driver key; only the last
   mode it added is kept); if that fails, the largest listed mode that fits is
   used. The color depth is kept.
-- Drag and drop from the host to the guest ("Host To Guest" or "Bidirectional"
-  in the VM's Devices menu), files and text, with the `VBoxDragAndDropSvc` HGCM
-  protocol. As upstream VBoxDnD: when a host drag enters the guest, an invisible
+- Drag and drop between the host and the guest (mode set in the VM's Devices
+  menu), files and text, with the `VBoxDragAndDropSvc` HGCM protocol. Only
+  copying, both ways.
+
+  Host to guest, as upstream VBoxDnD: when a host drag enters the guest, an invisible
   window covers the screen and the left button is pressed on it, which starts an
   OLE drag (`DoDragDrop`) that follows the host pointer. On the drop the data is
   requested from the host; files and directories are written to
   `%TEMP%\VirtualBox Dropped Files\<time stamp>` and handed to the drop target as
   `CF_HDROP` (copies), text as `CF_TEXT` (converted from UTF-8 to the active code
   page). Names the code page can't show get `_`. The dropped files stay in the
-  temporary directory, like upstream. Guest to host drag and drop is not
-  implemented: the host's queries for a pending guest drag are answered with no.
+  temporary directory, like upstream.
+
+  Guest to host, also as upstream: when the host pointer leaves the VM window
+  the host asks whether a guest drag is going on. The invisible window, an OLE
+  drop target, then covers the screen and the left button is released on it, so
+  a guest drag in progress drops there (the guest source sees a copy). Its data
+  (`CF_HDROP` files and directories, or `CF_TEXT` converted to UTF-8) is kept
+  for a minute and sent when the user drops on the host.
 - Reports the VBoxTrayClient facility status to the host.
 - Logs start/stop, setup failures, clock adjustments, display mode changes
   and the statistics interval to the release log (see below).
@@ -88,8 +96,8 @@ to VxDs on Windows 98.
 | `VBoxTray/Clipboard.c` | Shared clipboard (text) |
 | `VBoxTray/Stats.c` | Guest statistics |
 | `VBoxTray/Display.c` | Display resizing |
-| `VBoxTray/DnD.c` | Drag and drop: HGCM protocol, receiving files, proxy window |
-| `VBoxTray/DnDObj.c` | Drag and drop OLE objects (data object, drop source) in C |
+| `VBoxTray/DnD.c` | Drag and drop: HGCM protocol, receiving and sending files, proxy window |
+| `VBoxTray/DnDObj.c` | Drag and drop OLE objects (data object, drop source, drop target) in C |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 
@@ -98,7 +106,7 @@ The driver must only import functions NTKERN.VXD provides: check with
 
 # Todo:
 
-**VBoxTray**: Clipboard bitmaps and HTML, guest to host drag and drop.
+**VBoxTray**: Clipboard bitmaps and HTML.
 
 **Mouse**: If the user mode integration proves too slow, a VMOUSE VxD or a HID
 minidriver could use `IOCTL_VBOXGUEST98_INTERNAL_SET_MOUSE_NOTIFY` and

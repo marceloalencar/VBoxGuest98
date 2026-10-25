@@ -1,25 +1,33 @@
 /** @file
- * VBoxTray - Drag and drop from the host to the guest (files and text),
+ * VBoxTray - Drag and drop between the host and the guest (files and text),
  * VBoxDragAndDropSvc HGCM protocol v3, as upstream VBoxDnD.cpp.
  *
  * Two threads, each with its own HGCM client (like upstream):
  *  - The worker (VBoxDnDThread) blocks in GUEST_DND_FN_GET_NEXT_HOST_MSG,
  *    fetches the host messages and passes them on to the proxy window.  It
- *    also receives the dropped data: files and directories are written to
- *    %TEMP%\VirtualBox Dropped Files\<time stamp>.
- *  - The proxy window thread (vboxDnDUiThread) runs the OLE drag: when the
- *    host drag enters the guest, a topmost window covers the screen and the
- *    left button is pressed on it with mouse_event; the button down starts
- *    DoDragDrop, and the pointer follows the host's moves.  On the drop, the
- *    data is requested from the host and the button released once it is
- *    here, so the drop target gets it right away (CF_HDROP for files,
- *    CF_TEXT for text).
+ *    also does the transfers: it receives the data dropped on the guest
+ *    (files and directories are written to %TEMP%\VirtualBox Dropped
+ *    Files\<time stamp>) and sends the data dropped on the host.
+ *  - The proxy window thread (vboxDnDUiThread) runs the OLE side.
  *
- * Only copying is offered.  Guest to host drag and drop is not implemented:
- * the host's "is a drag pending" queries are answered with "no".
+ * Host to guest: when the host drag enters the guest, the topmost proxy
+ * window covers the screen and the left button is pressed on it with
+ * mouse_event; the button down starts DoDragDrop, and the pointer follows
+ * the host's moves.  On the drop, the data is requested from the host and
+ * the button released once it is here, so the drop target gets it right
+ * away (CF_HDROP for files, CF_TEXT for text).
+ *
+ * Guest to host: when the host pointer leaves the VM window, the host asks
+ * whether a guest drag is going on.  The proxy window, a drop target, then
+ * covers the screen and the left button is released on it, so a guest drag
+ * in progress drops there; its data is kept until the user drops on the
+ * host, and then sent.
+ *
+ * Only copying is offered, both ways.
  */
 
 #include "DnD.h"
+#include <shellapi.h>
 #include <shlobj.h>
 #include <process.h>
 #include <stdlib.h>
@@ -43,6 +51,23 @@
 #define WM_VBOXDND_RECEIVED         (WM_APP + 24)
 /** Worker -> window: shut down. */
 #define WM_VBOXDND_QUIT             (WM_APP + 25)
+/** Worker -> window: the host asks whether a guest drag is going on. */
+#define WM_VBOXDND_GH_PENDING       (WM_APP + 26)
+/** Worker -> window: the guest to host transfer is over. */
+#define WM_VBOXDND_GH_RESET         (WM_APP + 27)
+/** Worker -> window: the host cancelled the operation. */
+#define WM_VBOXDND_CANCEL           (WM_APP + 28)
+
+/** Timer: hide the proxy window if no guest drag showed up. */
+#define VBOXDND_GH_TIMER_HIDE       1
+/** Timer: forget a caught guest drag the host never asked for. */
+#define VBOXDND_GH_TIMER_EXPIRE     2
+/** How long a guest drag may take to reach the proxy window (ms). */
+#define VBOXDND_GH_HIDE_MS          500
+/** How long a caught guest drag is kept for the host (ms). */
+#define VBOXDND_GH_EXPIRE_MS        60000
+/** How long the host's drop waits for the guest drop on the proxy window (ms), as upstream. */
+#define VBOXDND_GH_DROP_WAIT_MS     5000
 
 /** Window class of the proxy window. */
 #define VBOXDND_WND_CLASS           "VBoxTrayDnDWndClass"
@@ -85,6 +110,27 @@ typedef struct VBOXDNDFORMAT
     const char *pszMime;
     CLIPFORMAT  cf;
 } VBOXDNDFORMAT;
+
+/** A directory or file sent to the host. */
+typedef struct VBOXDNDGHOBJ
+{
+    /** The guest path. */
+    char   *pszAbs;
+    /** The path in the transfer (UTF-8, '/' separated). */
+    char   *pszRel;
+    BOOL    fDir;
+    UINT64  cb;
+} VBOXDNDGHOBJ;
+
+/** The objects sent to the host, directories before their contents. */
+typedef struct VBOXDNDGHLIST
+{
+    VBOXDNDGHOBJ *paObjs;
+    DWORD         cObjs;
+    DWORD         cAlloc;
+    /** Sum of the file sizes. */
+    UINT64        cbFiles;
+} VBOXDNDGHLIST;
 
 /** Proxy window thread start up. */
 typedef struct VBOXDNDUISTART
@@ -136,6 +182,22 @@ static BOOL g_fDnDButtonDown = FALSE;
 static BOOL g_fDnDDragging = FALSE;
 /** An enter that came while DoDragDrop was still running (malloc'ed). */
 static VBOXDNDENTER *g_pDnDPendingEnter = NULL;
+/** The drop target catching guest drags for the host, NULL if not registered. */
+static IDropTarget *g_pDnDDropTarget = NULL;
+/** Whether the proxy window is up to catch a guest drag. */
+static BOOL g_fDnDGhActive = FALSE;
+/** Whether a guest drag is over the proxy window (DragEnter came, the drop not yet). */
+static BOOL g_fDnDGhOver = FALSE;
+
+/* Guest to host, shared with the worker (g_DnDCritSect): */
+/** The format of the caught guest drag, NULL if none. */
+static const char *g_pszDnDGhFormat = NULL;
+/** The data of the guest drag dropped on the proxy window (malloc'ed):
+ *  a CF_HDROP style path list if g_fDnDGhFiles, else UTF-8 text. */
+static char *g_pszDnDGhData = NULL;
+static BOOL g_fDnDGhFiles = FALSE;
+/** Signalled when g_pszDnDGhData is set. */
+static HANDLE g_hDnDGhDropped = NULL;
 
 
 /*********************************************************************************************************************************
@@ -266,7 +328,8 @@ static int vboxDnDConnect(HANDLE hDevice, UINT32 *pidClient)
 /**
  * Waits for the next host message.
  *
- * @returns VBox status code; VERR_CANCELLED if the host wants us to quit.
+ * @returns VBox status code; VERR_CANCELLED if the host cancelled the
+ *          current operation (HOST_DND_FN_CANCEL).
  */
 static int vboxDnDGetNextMsg(HANDLE hDevice, UINT32 idClient, UINT32 *puMsg, UINT32 *pcParms)
 {
@@ -414,33 +477,217 @@ static int vboxDnDSendProgress(HANDLE hDevice, UINT32 idClient, UINT32 uStatus, 
 }
 
 /**
- * Answers the host's "is a guest drag pending" query with no.
+ * Fetches the host's "is a guest drag pending" query (uContext, uScreenId).
  */
-static int vboxDnDAnswerPending(HANDLE hDevice, UINT32 idClient)
+static int vboxDnDRecvGhPending(HANDLE hDevice, UINT32 idClient)
 {
-    static const char s_szNoFormats[] = "";
     VBOXDNDMSG Msg;
     int rc;
 
-    /* Fetch the query (uContext, uScreenId). */
     if (!vboxDnDMsgInit(&Msg, idClient, HOST_DND_FN_GH_REQ_PENDING, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
         return VERR_NO_MEMORY;
     vboxDnDMsgSetU32(&Msg, 0, 0);
     vboxDnDMsgSetU32(&Msg, 1, 0);
     rc = vboxDnDMsgCall(hDevice, &Msg);
     vboxDnDMsgFree(&Msg);
-    if (RT_FAILURE(rc))
-        return rc;
+    return rc;
+}
 
-    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_ACK_PENDING, 5, VBOXDND_CALL_TIMEOUT_MS, sizeof(s_szNoFormats)))
+/**
+ * Answers the "is a guest drag pending" query.
+ *
+ * @param   pszFormats  The formats of the guest drag, "" (with
+ *                      VBOX_DND_ACTION_IGNORE) if there is none.
+ */
+static int vboxDnDSendAckPending(HANDLE hDevice, UINT32 idClient, UINT32 uAction, const char *pszFormats)
+{
+    DWORD cbFormats = lstrlen(pszFormats) + 1;
+    VBOXDNDMSG Msg;
+    int rc;
+
+    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_ACK_PENDING, 5, VBOXDND_CALL_TIMEOUT_MS, cbFormats))
         return VERR_NO_MEMORY;
     vboxDnDMsgSetU32(&Msg, 0, 0);                           /* uContext */
-    vboxDnDMsgSetU32(&Msg, 1, VBOX_DND_ACTION_IGNORE);      /* uDefAction */
-    vboxDnDMsgSetU32(&Msg, 2, VBOX_DND_ACTION_IGNORE);      /* uAllActions */
-    vboxDnDMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, sizeof(s_szNoFormats), s_szNoFormats);
-    vboxDnDMsgSetU32(&Msg, 4, sizeof(s_szNoFormats));       /* cbFormats */
+    vboxDnDMsgSetU32(&Msg, 1, uAction);                     /* uDefAction */
+    vboxDnDMsgSetU32(&Msg, 2, uAction);                     /* uAllActions */
+    vboxDnDMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbFormats, pszFormats);
+    vboxDnDMsgSetU32(&Msg, 4, cbFormats);                   /* cbFormats */
     rc = vboxDnDMsgCall(hDevice, &Msg);
     vboxDnDMsgFree(&Msg);
+    return rc;
+}
+
+/**
+ * Fetches HOST_DND_FN_GH_EVT_DROPPED: the guest drag was dropped on the host.
+ *
+ * @param   pszFormat   Where to return the format the host wants.
+ * @param   cbFormat    Size of pszFormat.
+ */
+static int vboxDnDRecvGhDropped(HANDLE hDevice, UINT32 idClient, char *pszFormat, DWORD cbFormat)
+{
+    VBOXDNDMSG Msg;
+    BYTE *pb;
+    int rc;
+
+    if (!vboxDnDMsgInit(&Msg, idClient, HOST_DND_FN_GH_EVT_DROPPED, 4, VBOXDND_CALL_TIMEOUT_MS, VBOX_DND_CHUNK_SIZE))
+        return VERR_NO_MEMORY;
+    vboxDnDMsgSetU32(&Msg, 0, 0);                                                               /* uContext */
+    pb = vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, VBOX_DND_CHUNK_SIZE, NULL);    /* pvFormat */
+    vboxDnDMsgSetU32(&Msg, 2, 0);                                                               /* cbFormat */
+    vboxDnDMsgSetU32(&Msg, 3, 0);                                                               /* uAction */
+    rc = vboxDnDMsgCall(hDevice, &Msg);
+    if (RT_SUCCESS(rc))
+        lstrcpyn(pszFormat, (const char *)pb, cbFormat < VBOX_DND_CHUNK_SIZE ? cbFormat : VBOX_DND_CHUNK_SIZE);
+    vboxDnDMsgFree(&Msg);
+    return rc;
+}
+
+/**
+ * Tells the host the guest data can't be sent, so it doesn't wait for it.
+ */
+static int vboxDnDSendError(HANDLE hDevice, UINT32 idClient, int rcErr)
+{
+    VBOXDNDMSG Msg;
+    int rc;
+
+    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_EVT_ERROR, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
+        return VERR_NO_MEMORY;
+    vboxDnDMsgSetU32(&Msg, 0, 0);
+    vboxDnDMsgSetU32(&Msg, 1, (UINT32)rcErr);
+    rc = vboxDnDMsgCall(hDevice, &Msg);
+    vboxDnDMsgFree(&Msg);
+    return rc;
+}
+
+/**
+ * Sends the data header and the meta data of a guest to host transfer
+ * (vbglR3DnDGHSendDataInternal).
+ *
+ * @param   pszMetaFmt  "text/uri-list" for files, NULL for raw data.
+ * @param   cbTotal     Meta data plus file bytes.
+ */
+static int vboxDnDGhSendMeta(HANDLE hDevice, UINT32 idClient, const char *pszMetaFmt, const void *pvMeta, DWORD cbMeta,
+                             UINT64 cbTotal, UINT64 cObjects)
+{
+    DWORD cbMetaFmt = pszMetaFmt ? lstrlen(pszMetaFmt) + 1 : 0;
+    DWORD cbSent = 0;
+    VBOXDNDMSG Msg;
+    int rc;
+
+    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_DATA_HDR, 12, VBOXDND_CALL_TIMEOUT_MS, cbMetaFmt))
+        return VERR_NO_MEMORY;
+    vboxDnDMsgSetU32(&Msg, 0, 0);                                                           /* uContext */
+    vboxDnDMsgSetU32(&Msg, 1, 0);                                                           /* uFlags */
+    vboxDnDMsgSetU32(&Msg, 2, 0);                                                           /* uScreenId */
+    vboxDnDMsgSetU64(&Msg, 3, cbTotal);                                                     /* cbTotal */
+    vboxDnDMsgSetU32(&Msg, 4, cbMeta);                                                      /* cbMeta */
+    vboxDnDMsgSetBuf(&Msg, 5, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbMetaFmt, pszMetaFmt);      /* pvMetaFmt */
+    vboxDnDMsgSetU32(&Msg, 6, cbMetaFmt);                                                   /* cbMetaFmt */
+    vboxDnDMsgSetU64(&Msg, 7, cObjects);                                                    /* cObjects */
+    vboxDnDMsgSetU32(&Msg, 8, 0);                                                           /* enmCompression */
+    vboxDnDMsgSetU32(&Msg, 9, 0);                                                           /* enmChecksumType */
+    vboxDnDMsgSetBuf(&Msg, 10, VBOXGUEST98_HGCM_PARM_BUFFER_IN, 0, NULL);                   /* pvChecksum */
+    vboxDnDMsgSetU32(&Msg, 11, 0);                                                          /* cbChecksum */
+    rc = vboxDnDMsgCall(hDevice, &Msg);
+    vboxDnDMsgFree(&Msg);
+
+    while (RT_SUCCESS(rc) && cbSent < cbMeta)
+    {
+        DWORD cbChunk = cbMeta - cbSent < VBOX_DND_CHUNK_SIZE ? cbMeta - cbSent : VBOX_DND_CHUNK_SIZE;
+        if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_DATA, 5, VBOXDND_CALL_TIMEOUT_MS, cbChunk))
+            return VERR_NO_MEMORY;
+        vboxDnDMsgSetU32(&Msg, 0, 0);                                                               /* uContext */
+        vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbChunk, (const BYTE *)pvMeta + cbSent); /* pvData */
+        vboxDnDMsgSetU32(&Msg, 2, cbChunk);                                                         /* cbData */
+        vboxDnDMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, 0, NULL);                        /* pvChecksum */
+        vboxDnDMsgSetU32(&Msg, 4, 0);                                                               /* cbChecksum */
+        rc = vboxDnDMsgCall(hDevice, &Msg);
+        vboxDnDMsgFree(&Msg);
+        cbSent += cbChunk;
+    }
+    return rc;
+}
+
+/**
+ * Sends a directory of a guest to host transfer.
+ *
+ * @param   pszRel      Its path in the transfer (UTF-8, '/' separated).
+ */
+static int vboxDnDGhSendDir(HANDLE hDevice, UINT32 idClient, const char *pszRel)
+{
+    DWORD cbRel = lstrlen(pszRel) + 1;
+    VBOXDNDMSG Msg;
+    int rc;
+
+    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_DIR, 4, VBOXDND_CALL_TIMEOUT_MS, cbRel))
+        return VERR_NO_MEMORY;
+    vboxDnDMsgSetU32(&Msg, 0, 0);                                                   /* uContext */
+    vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbRel, pszRel);      /* pvName */
+    vboxDnDMsgSetU32(&Msg, 2, cbRel);                                               /* cbName */
+    vboxDnDMsgSetU32(&Msg, 3, VBOX_DND_MODE_DIR);                                   /* fMode */
+    rc = vboxDnDMsgCall(hDevice, &Msg);
+    vboxDnDMsgFree(&Msg);
+    return rc;
+}
+
+/**
+ * Sends a file of a guest to host transfer: the header, then the data in chunks.
+ *
+ * @param   pszAbs      The guest file.
+ * @param   pszRel      Its path in the transfer (UTF-8, '/' separated).
+ * @param   cbFile      Its size, as announced in the data header.
+ */
+static int vboxDnDGhSendFile(HANDLE hDevice, UINT32 idClient, const char *pszAbs, const char *pszRel, UINT64 cbFile)
+{
+    DWORD cbRel = lstrlen(pszRel) + 1;
+    UINT64 cbLeft = cbFile;
+    VBOXDNDMSG Msg;
+    HANDLE hFile;
+    int rc;
+
+    hFile = CreateFile(pszAbs, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE)
+        return VERR_OPEN_FAILED;
+
+    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_FILE_HDR, 6, VBOXDND_CALL_TIMEOUT_MS, cbRel))
+    {
+        CloseHandle(hFile);
+        return VERR_NO_MEMORY;
+    }
+    vboxDnDMsgSetU32(&Msg, 0, 0);                                                   /* uContext */
+    vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbRel, pszRel);      /* pvName */
+    vboxDnDMsgSetU32(&Msg, 2, cbRel);                                               /* cbName */
+    vboxDnDMsgSetU32(&Msg, 3, 0);                                                   /* uFlags */
+    vboxDnDMsgSetU32(&Msg, 4, VBOX_DND_MODE_FILE);                                  /* fMode */
+    vboxDnDMsgSetU64(&Msg, 5, cbFile);                                              /* cbTotal */
+    rc = vboxDnDMsgCall(hDevice, &Msg);
+    vboxDnDMsgFree(&Msg);
+
+    while (RT_SUCCESS(rc) && cbLeft)
+    {
+        DWORD cbChunk = cbLeft < VBOX_DND_CHUNK_SIZE ? (DWORD)cbLeft : VBOX_DND_CHUNK_SIZE;
+        DWORD cbRead = 0;
+        BYTE *pb;
+
+        if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_FILE_DATA, 5, VBOXDND_CALL_TIMEOUT_MS, cbChunk))
+        {
+            rc = VERR_NO_MEMORY;
+            break;
+        }
+        vboxDnDMsgSetU32(&Msg, 0, 0);                                                       /* uContext */
+        pb = vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbChunk, NULL);     /* pvData */
+        vboxDnDMsgSetU32(&Msg, 2, cbChunk);                                                 /* cbData */
+        vboxDnDMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, 0, NULL);                /* pvChecksum */
+        vboxDnDMsgSetU32(&Msg, 4, 0);                                                       /* cbChecksum */
+        if (!ReadFile(hFile, pb, cbChunk, &cbRead, NULL) || cbRead != cbChunk)
+            rc = VERR_READ_ERROR; /* The file changed size since we looked: the host counts on the announced size. */
+        else
+            rc = vboxDnDMsgCall(hDevice, &Msg);
+        vboxDnDMsgFree(&Msg);
+        cbLeft -= cbChunk;
+    }
+
+    CloseHandle(hFile);
     return rc;
 }
 
@@ -1135,8 +1382,317 @@ static int vboxDnDRecvData(HANDLE hDevice, UINT32 idClient)
 
 
 /*********************************************************************************************************************************
+*   Sending data to the host (worker thread)                                                                                     *
+*********************************************************************************************************************************/
+
+/**
+ * Converts text in the ANSI code page to UTF-8.
+ *
+ * @returns Zero terminated UTF-8 (malloc'ed), NULL on failure.
+ */
+static char *vboxDnDAnsiToUtf8(const char *psz)
+{
+    WCHAR *pwsz;
+    BYTE *pbRet;
+    DWORD off = 0;
+    int cwc;
+    int i;
+
+    cwc = MultiByteToWideChar(CP_ACP, 0, psz, -1, NULL, 0);
+    if (cwc <= 0)
+        return NULL;
+    pwsz = (WCHAR *)malloc(cwc * sizeof(WCHAR));
+    pbRet = (BYTE *)malloc(cwc * 3); /* Up to 3 bytes per UTF-16 unit, 4 per surrogate pair. */
+    if (!pwsz || !pbRet || !MultiByteToWideChar(CP_ACP, 0, psz, -1, pwsz, cwc))
+    {
+        free(pwsz);
+        free(pbRet);
+        return NULL;
+    }
+
+    for (i = 0; i < cwc; i++)
+    {
+        DWORD uc = pwsz[i];
+        if (   uc >= 0xd800 && uc <= 0xdbff
+            && i + 1 < cwc && pwsz[i + 1] >= 0xdc00 && pwsz[i + 1] <= 0xdfff)
+        {
+            uc = 0x10000 + ((uc - 0xd800) << 10) + (pwsz[i + 1] - 0xdc00);
+            i++;
+        }
+        if (uc < 0x80)
+            pbRet[off++] = (BYTE)uc;
+        else if (uc < 0x800)
+        {
+            pbRet[off++] = (BYTE)(0xc0 | (uc >> 6));
+            pbRet[off++] = (BYTE)(0x80 | (uc & 0x3f));
+        }
+        else if (uc < 0x10000)
+        {
+            pbRet[off++] = (BYTE)(0xe0 | (uc >> 12));
+            pbRet[off++] = (BYTE)(0x80 | ((uc >> 6) & 0x3f));
+            pbRet[off++] = (BYTE)(0x80 | (uc & 0x3f));
+        }
+        else
+        {
+            pbRet[off++] = (BYTE)(0xf0 | (uc >> 18));
+            pbRet[off++] = (BYTE)(0x80 | ((uc >> 12) & 0x3f));
+            pbRet[off++] = (BYTE)(0x80 | ((uc >> 6) & 0x3f));
+            pbRet[off++] = (BYTE)(0x80 | (uc & 0x3f));
+        }
+    }
+    free(pwsz);
+    return (char *)pbRet; /* The terminator was converted too. */
+}
+
+/**
+ * Adds a directory or file to the transfer list.
+ *
+ * @param   pszRel      Its path in the transfer (ANSI, '\' separated).
+ */
+static int vboxDnDGhListAdd(VBOXDNDGHLIST *pList, const char *pszAbs, const char *pszRel, BOOL fDir, UINT64 cb)
+{
+    VBOXDNDGHOBJ *pObj;
+    char *psz;
+
+    if (pList->cObjs == pList->cAlloc)
+    {
+        VBOXDNDGHOBJ *paNew = (VBOXDNDGHOBJ *)realloc(pList->paObjs, (pList->cAlloc + 64) * sizeof(VBOXDNDGHOBJ));
+        if (!paNew)
+            return VERR_NO_MEMORY;
+        pList->paObjs  = paNew;
+        pList->cAlloc += 64;
+    }
+
+    pObj = &pList->paObjs[pList->cObjs];
+    pObj->pszAbs = _strdup(pszAbs);
+    pObj->pszRel = vboxDnDAnsiToUtf8(pszRel);
+    if (!pObj->pszAbs || !pObj->pszRel)
+    {
+        free(pObj->pszAbs);
+        free(pObj->pszRel);
+        return VERR_NO_MEMORY;
+    }
+    /* After the conversion, since a DBCS trail byte can look like a backslash. */
+    for (psz = pObj->pszRel; *psz; psz++)
+        if (*psz == '\\')
+            *psz = '/';
+    pObj->fDir = fDir;
+    pObj->cb   = cb;
+    pList->cObjs++;
+    if (!fDir)
+        pList->cbFiles += cb;
+    return VINF_SUCCESS;
+}
+
+/**
+ * Adds a file, or a directory and everything in it, to the transfer list.
+ *
+ * @param   pFd         What FindFirstFile/FindNextFile found for it.
+ */
+static int vboxDnDGhListAddTree(VBOXDNDGHLIST *pList, const char *pszAbs, const char *pszRel, const WIN32_FIND_DATA *pFd)
+{
+    char szAbs[MAX_PATH];
+    char szRel[MAX_PATH];
+    WIN32_FIND_DATA Fd;
+    HANDLE hFind;
+    int rc;
+
+    if (!(pFd->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+        return vboxDnDGhListAdd(pList, pszAbs, pszRel, FALSE, ((UINT64)pFd->nFileSizeHigh << 32) | pFd->nFileSizeLow);
+
+    rc = vboxDnDGhListAdd(pList, pszAbs, pszRel, TRUE, 0);
+    if (RT_FAILURE(rc))
+        return rc;
+    if (lstrlen(pszAbs) + 4 >= MAX_PATH)
+        return VERR_FILENAME_TOO_LONG;
+    wsprintf(szAbs, "%s\\*.*", pszAbs);
+    hFind = FindFirstFile(szAbs, &Fd);
+    if (hFind == INVALID_HANDLE_VALUE)
+        return VINF_SUCCESS; /* Empty. */
+    do
+    {
+        if (!lstrcmp(Fd.cFileName, ".") || !lstrcmp(Fd.cFileName, ".."))
+            continue;
+        if (   lstrlen(pszAbs) + 1 + lstrlen(Fd.cFileName) >= MAX_PATH
+            || lstrlen(pszRel) + 1 + lstrlen(Fd.cFileName) >= MAX_PATH)
+        {
+            rc = VERR_FILENAME_TOO_LONG;
+            break;
+        }
+        wsprintf(szAbs, "%s\\%s", pszAbs, Fd.cFileName);
+        wsprintf(szRel, "%s\\%s", pszRel, Fd.cFileName);
+        rc = vboxDnDGhListAddTree(pList, szAbs, szRel, &Fd);
+    } while (RT_SUCCESS(rc) && FindNextFile(hFind, &Fd));
+    FindClose(hFind);
+    return rc;
+}
+
+static void vboxDnDGhListFree(VBOXDNDGHLIST *pList)
+{
+    DWORD i;
+    for (i = 0; i < pList->cObjs; i++)
+    {
+        free(pList->paObjs[i].pszAbs);
+        free(pList->paObjs[i].pszRel);
+    }
+    free(pList->paObjs);
+    memset(pList, 0, sizeof(*pList));
+}
+
+/**
+ * Appends a transfer root to the URI list: file:///<name>, %XX escaped, as
+ * DnDTransferListGetRoots makes them.
+ *
+ * @param   ppszMeta    The list (malloc'ed, reallocated).
+ * @param   pcchMeta    Its length.
+ * @param   pszName     The root's name (ANSI).
+ */
+static int vboxDnDGhMetaAddRoot(char **ppszMeta, DWORD *pcchMeta, const char *pszName)
+{
+    static const char s_szHex[] = "0123456789ABCDEF";
+    char *pszUtf8 = vboxDnDAnsiToUtf8(pszName);
+    char *pszNew;
+    BYTE *pb;
+    DWORD off;
+
+    if (!pszUtf8)
+        return VERR_NO_MEMORY;
+    pszNew = (char *)realloc(*ppszMeta, *pcchMeta + sizeof("file:///\r\n") + lstrlen(pszUtf8) * 3);
+    if (!pszNew)
+    {
+        free(pszUtf8);
+        return VERR_NO_MEMORY;
+    }
+    *ppszMeta = pszNew;
+
+    off = *pcchMeta;
+    memcpy(&pszNew[off], "file:///", 8);
+    off += 8;
+    for (pb = (BYTE *)pszUtf8; *pb; pb++)
+    {
+        if (   (*pb >= 'a' && *pb <= 'z') || (*pb >= 'A' && *pb <= 'Z') || (*pb >= '0' && *pb <= '9')
+            || *pb == '-' || *pb == '.' || *pb == '_' || *pb == '~')
+            pszNew[off++] = (char)*pb;
+        else
+        {
+            pszNew[off++] = '%';
+            pszNew[off++] = s_szHex[*pb >> 4];
+            pszNew[off++] = s_szHex[*pb & 0xf];
+        }
+    }
+    memcpy(&pszNew[off], VBOX_DND_FORMATS_SEPARATOR, 2);
+    off += 2;
+    pszNew[off] = '\0';
+    *pcchMeta = off;
+    free(pszUtf8);
+    return VINF_SUCCESS;
+}
+
+/**
+ * Sends dropped guest files and directories to the host
+ * (vbglR3DnDGHSendTransferData): the URI list of the roots as meta data,
+ * then every directory and file below them.
+ *
+ * @param   pszPaths    The dropped paths, CF_HDROP style (each zero
+ *                      terminated, an empty one ends the list).
+ */
+static int vboxDnDGhSendFiles(HANDLE hDevice, UINT32 idClient, const char *pszPaths)
+{
+    VBOXDNDGHLIST List;
+    char *pszMeta = NULL;
+    DWORD cchMeta = 0;
+    const char *psz;
+    DWORD i;
+    int rc = VINF_SUCCESS;
+
+    memset(&List, 0, sizeof(List));
+    for (psz = pszPaths; *psz && RT_SUCCESS(rc); psz += lstrlen(psz) + 1)
+    {
+        WIN32_FIND_DATA Fd;
+        HANDLE hFind = FindFirstFile(psz, &Fd);
+        if (hFind == INVALID_HANDLE_VALUE)
+        {
+            VBoxTrayLogRel("DnD: \"%s\" not found, not sent\n", psz);
+            continue; /* A drive or such. */
+        }
+        FindClose(hFind);
+        rc = vboxDnDGhListAddTree(&List, psz, Fd.cFileName, &Fd);
+        if (RT_SUCCESS(rc))
+            rc = vboxDnDGhMetaAddRoot(&pszMeta, &cchMeta, Fd.cFileName);
+    }
+    if (RT_SUCCESS(rc) && !List.cObjs)
+        rc = VERR_NO_DATA;
+
+    /* The meta data includes the terminator, like upstream's. */
+    if (RT_SUCCESS(rc))
+        rc = vboxDnDGhSendMeta(hDevice, idClient, "text/uri-list", pszMeta, cchMeta + 1, cchMeta + 1 + List.cbFiles,
+                               List.cObjs);
+    for (i = 0; RT_SUCCESS(rc) && i < List.cObjs; i++)
+    {
+        if (List.paObjs[i].fDir)
+            rc = vboxDnDGhSendDir(hDevice, idClient, List.paObjs[i].pszRel);
+        else
+            rc = vboxDnDGhSendFile(hDevice, idClient, List.paObjs[i].pszAbs, List.paObjs[i].pszRel, List.paObjs[i].cb);
+        if (RT_FAILURE(rc))
+            VBoxTrayLogRel("DnD: sending \"%s\" failed, rc=%d\n", List.paObjs[i].pszAbs, rc);
+    }
+    if (RT_SUCCESS(rc))
+        VBoxTrayLogRel("DnD: sent %lu objects, %lu KB to the host\n", List.cObjs, (unsigned long)(List.cbFiles / 1024));
+
+    free(pszMeta);
+    vboxDnDGhListFree(&List);
+    return rc;
+}
+
+/**
+ * The guest drag was dropped on the host: sends the data the proxy window
+ * caught (OnGhDrop).
+ *
+ * @param   pszFormat   The format the host asked for.
+ */
+static int vboxDnDGhSend(HANDLE hDevice, UINT32 idClient, const char *pszFormat)
+{
+    char *pszData;
+    BOOL fFiles;
+    int rc;
+
+    /* Normally the guest drop on the proxy window is long done. */
+    WaitForSingleObject(g_hDnDGhDropped, VBOXDND_GH_DROP_WAIT_MS);
+
+    EnterCriticalSection(&g_DnDCritSect);
+    pszData = g_pszDnDGhData;
+    fFiles  = g_fDnDGhFiles;
+    g_pszDnDGhData = NULL;
+    LeaveCriticalSection(&g_DnDCritSect);
+
+    VBoxTrayLogRel("DnD: dropped on the host, which wants %s\n", pszFormat);
+    if (!pszData)
+        rc = VERR_NO_DATA;
+    else if (fFiles)
+        rc = vboxDnDGhSendFiles(hDevice, idClient, pszData);
+    else
+    {
+        DWORD cb = lstrlen(pszData) + 1;
+        rc = vboxDnDGhSendMeta(hDevice, idClient, NULL, pszData, cb, cb, 0);
+        if (RT_SUCCESS(rc))
+            VBoxTrayLogRel("DnD: sent %lu bytes of text to the host\n", cb);
+    }
+    free(pszData);
+
+    if (RT_FAILURE(rc))
+    {
+        VBoxTrayLogRel("DnD: sending to the host failed, rc=%d\n", rc);
+        vboxDnDSendError(hDevice, idClient, rc); /* So the host doesn't wait for the data. */
+    }
+    return rc;
+}
+
+
+/*********************************************************************************************************************************
 *   Proxy window (window thread)                                                                                                 *
 *********************************************************************************************************************************/
+
+static void vboxDnDGhReset(void);
 
 /**
  * Moves the pointer to a guest screen position, pressing the left button
@@ -1281,6 +1837,7 @@ static void vboxDnDOnEnter(VBOXDNDENTER *pEnter)
     }
     if (g_fDnDActive)
         vboxDnDAbort();
+    vboxDnDGhReset(); /* A host drag replaces a guest one. */
 
     g_pDnDFormat = vboxDnDPickFormat(pEnter->szFormats);
     if (!g_pDnDFormat || !(pEnter->fAllActions & VBOX_DND_ACTION_COPY))
@@ -1391,6 +1948,252 @@ static void vboxDnDStartDrag(void)
 }
 
 /**
+ * Answers the host's pending query with the caught guest drag, if any.
+ * Only ever as the answer to a query: the host waits for each answer with
+ * one event, so an answer coming late or unasked would be taken for the
+ * answer to its next request.
+ */
+static void vboxDnDGhAnswer(void)
+{
+    static const char *s_pszLastLogged = (const char *)1;
+    const char *pszFormat;
+    int rc;
+
+    EnterCriticalSection(&g_DnDCritSect);
+    pszFormat = g_pszDnDGhFormat;
+    LeaveCriticalSection(&g_DnDCritSect);
+
+    rc = vboxDnDSendAckPending(g_hDnDUiDevice, g_idDnDUiClient, pszFormat ? VBOX_DND_ACTION_COPY : VBOX_DND_ACTION_IGNORE,
+                               pszFormat ? pszFormat : "");
+    /* The host asks on every pointer move; log changes only. */
+    if (pszFormat != s_pszLastLogged || RT_FAILURE(rc))
+        VBoxTrayLogRel("DnD: answered the pending query with %s, rc=%d\n", pszFormat ? pszFormat : "none", rc);
+    s_pszLastLogged = pszFormat;
+}
+
+/**
+ * Ends a guest to host operation: hides the proxy window and forgets the
+ * caught drag.
+ */
+static void vboxDnDGhReset(void)
+{
+    char *pszData;
+
+    KillTimer(g_hwndDnD, VBOXDND_GH_TIMER_HIDE);
+    KillTimer(g_hwndDnD, VBOXDND_GH_TIMER_EXPIRE);
+    if (g_fDnDGhActive && !g_fDnDGhOver) /* Else when the guest drag ends (vboxDnDGhDragDone). */
+    {
+        ShowWindow(g_hwndDnD, SW_HIDE);
+        g_fDnDGhActive = FALSE;
+    }
+
+    EnterCriticalSection(&g_DnDCritSect);
+    g_pszDnDGhFormat = NULL;
+    pszData = g_pszDnDGhData;
+    g_pszDnDGhData = NULL;
+    ResetEvent(g_hDnDGhDropped);
+    LeaveCriticalSection(&g_DnDCritSect);
+    free(pszData);
+}
+
+/**
+ * The host asks whether a guest drag is going on: its pointer left the VM
+ * window with the button down.  As upstream, the proxy window covers the
+ * screen and the left button is released on it, so a guest drag drops on our
+ * drop target (otherwise the window just gets the button release).
+ *
+ * The host waits only 100 ms for the answer, and the drag reaches the window
+ * later, so the first query is answered with what we have, usually nothing.
+ * The host asks again on every move of its pointer, and finds the drag then.
+ */
+static void vboxDnDGhOnPending(void)
+{
+    POINT Pt;
+    int cx;
+    int cy;
+
+    if (g_fDnDActive || g_fDnDDragging || !g_pDnDDropTarget)
+    {
+        /* A host drag is in the guest, or no way to catch one: answer "none". */
+        vboxDnDSendAckPending(g_hDnDUiDevice, g_idDnDUiClient, VBOX_DND_ACTION_IGNORE, "");
+        return;
+    }
+
+    if (!g_fDnDGhActive)
+    {
+        cx = GetSystemMetrics(SM_CXSCREEN);
+        cy = GetSystemMetrics(SM_CYSCREEN);
+        SetWindowPos(g_hwndDnD, HWND_TOPMOST, 0, 0, cx, cy, SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOREDRAW);
+        g_fDnDGhActive = TRUE;
+
+        /* A move first, so the drag notices the window under the pointer. */
+        GetCursorPos(&Pt);
+        mouse_event(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, (DWORD)MulDiv(Pt.x, 65535, cx > 1 ? cx - 1 : 1),
+                    (DWORD)MulDiv(Pt.y, 65535, cy > 1 ? cy - 1 : 1), 0, 0);
+        mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+    }
+    /* Take the window away again if no guest drag shows up. */
+    if (!g_pszDnDGhFormat)
+        SetTimer(g_hwndDnD, VBOXDND_GH_TIMER_HIDE, VBOXDND_GH_HIDE_MS, NULL);
+
+    vboxDnDGhAnswer();
+}
+
+/**
+ * Copies the paths of a CF_HDROP into a list of zero terminated strings
+ * ending with an empty one.
+ */
+static char *vboxDnDGhCopyHDrop(HDROP hDrop)
+{
+    UINT cFiles = DragQueryFile(hDrop, 0xffffffff, NULL, 0);
+    DWORD cb = 1;
+    DWORD off = 0;
+    char *pszRet;
+    UINT i;
+
+    for (i = 0; i < cFiles; i++)
+        cb += DragQueryFile(hDrop, i, NULL, 0) + 1;
+    pszRet = (char *)malloc(cb);
+    if (!pszRet)
+        return NULL;
+    for (i = 0; i < cFiles; i++)
+        off += DragQueryFile(hDrop, i, &pszRet[off], cb - off) + 1;
+    pszRet[off] = '\0';
+    return pszRet;
+}
+
+/**
+ * Gets the data of a guest drag: a CF_HDROP style path list or UTF-8 text.
+ *
+ * @returns The data (malloc'ed), NULL on failure.
+ */
+static char *vboxDnDGhGetData(CLIPFORMAT cfFormat, IDataObject *pDataObj)
+{
+    FORMATETC FormatEtc;
+    STGMEDIUM Medium;
+    char *pszData = NULL;
+
+    FormatEtc.cfFormat = cfFormat;
+    FormatEtc.ptd      = NULL;
+    FormatEtc.dwAspect = DVASPECT_CONTENT;
+    FormatEtc.lindex   = -1;
+    FormatEtc.tymed    = TYMED_HGLOBAL;
+    if (SUCCEEDED(pDataObj->lpVtbl->GetData(pDataObj, &FormatEtc, &Medium)))
+    {
+        if (Medium.tymed == TYMED_HGLOBAL)
+        {
+            if (cfFormat == CF_HDROP)
+                pszData = vboxDnDGhCopyHDrop((HDROP)Medium.hGlobal);
+            else
+            {
+                const char *pch = (const char *)GlobalLock(Medium.hGlobal);
+                if (pch)
+                {
+                    /* Make sure it is terminated. */
+                    DWORD cb = (DWORD)GlobalSize(Medium.hGlobal);
+                    char *pszAnsi = (char *)malloc(cb + 1);
+                    if (pszAnsi)
+                    {
+                        memcpy(pszAnsi, pch, cb);
+                        pszAnsi[cb] = '\0';
+                        pszData = vboxDnDAnsiToUtf8(pszAnsi);
+                        free(pszAnsi);
+                    }
+                    GlobalUnlock(Medium.hGlobal);
+                }
+            }
+        }
+        ReleaseStgMedium(&Medium);
+    }
+    return pszData;
+}
+
+/**
+ * A guest drag reached the proxy window (drop target callback): take its
+ * data right away.
+ *
+ * Waiting for the drop doesn't work on Windows 98: while the user drags on
+ * the host with the button held, the PS/2 mouse keeps reporting the button
+ * down, so our release doesn't end the guest drag, and the drop comes only
+ * when the real button goes up, maybe after the host's drop.
+ *
+ * @param   cfFormat    CF_HDROP, CF_TEXT, or 0 for none we take.
+ */
+void VBoxDnDGhOnDragEnter(CLIPFORMAT cfFormat, IDataObject *pDataObj)
+{
+    const char *pszFormat = NULL;
+    char *pszData;
+
+    if (!g_fDnDGhActive)
+        return;
+    g_fDnDGhOver = TRUE;
+    if (cfFormat == CF_HDROP)
+        pszFormat = "text/uri-list";
+    else if (cfFormat == CF_TEXT)
+        pszFormat = "text/plain;charset=utf-8";
+    else
+        return;
+
+    pszData = vboxDnDGhGetData(cfFormat, pDataObj);
+    if (!pszData)
+    {
+        VBoxTrayLogRel("DnD: getting the guest drag's data failed\n");
+        return;
+    }
+
+    EnterCriticalSection(&g_DnDCritSect);
+    free(g_pszDnDGhData);
+    g_pszDnDGhData   = pszData;
+    g_fDnDGhFiles    = cfFormat == CF_HDROP;
+    g_pszDnDGhFormat = pszFormat;
+    SetEvent(g_hDnDGhDropped);
+    LeaveCriticalSection(&g_DnDCritSect);
+    SetTimer(g_hwndDnD, VBOXDND_GH_TIMER_EXPIRE, VBOXDND_GH_EXPIRE_MS, NULL);
+
+    KillTimer(g_hwndDnD, VBOXDND_GH_TIMER_HIDE);
+    VBoxTrayLogRel("DnD: guest drag caught for the host, offering %s\n", pszFormat);
+    /* The host's next query gets it (vboxDnDGhAnswer). */
+}
+
+/**
+ * The guest drag is over: the proxy window isn't needed any more.  Until
+ * then it stays up, or the drag would drop on the window below it.
+ */
+static void vboxDnDGhDragDone(void)
+{
+    g_fDnDGhOver = FALSE;
+    if (g_fDnDGhActive)
+    {
+        ShowWindow(g_hwndDnD, SW_HIDE);
+        g_fDnDGhActive = FALSE;
+    }
+}
+
+/**
+ * The guest drag was dropped on the proxy window (drop target callback).
+ *
+ * @returns TRUE if its data was taken (the guest sees a copy), FALSE if not.
+ */
+BOOL VBoxDnDGhOnDrop(void)
+{
+    BOOL fTaken;
+
+    EnterCriticalSection(&g_DnDCritSect);
+    fTaken = g_pszDnDGhFormat != NULL;
+    LeaveCriticalSection(&g_DnDCritSect);
+    vboxDnDGhDragDone();
+    return fTaken;
+}
+
+/**
+ * The guest drag left the proxy window (drop target callback): cancelled.
+ */
+void VBoxDnDGhOnDragLeave(void)
+{
+    vboxDnDGhDragDone();
+}
+
+/**
  * Proxy window procedure.
  */
 static LRESULT CALLBACK vboxDnDWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -1440,10 +2243,47 @@ static LRESULT CALLBACK vboxDnDWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
                 vboxDnDAbort();
             return 0;
 
+        case WM_VBOXDND_GH_PENDING:
+            vboxDnDGhOnPending();
+            return 0;
+
+        case WM_VBOXDND_GH_RESET:
+            /* After the host's drop the user's button is up, but the guest never saw
+               that (it went up outside the VM window), so the guest drag would go on
+               holding the mouse: end it, on the proxy window (a copy). */
+            if (wParam && g_fDnDGhOver)
+                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+            vboxDnDGhReset();
+            return 0;
+
+        case WM_VBOXDND_CANCEL:
+            VBoxTrayLogRel("DnD: the host cancelled the operation\n");
+            vboxDnDAbort();
+            vboxDnDGhReset();
+            return 0;
+
+        case WM_TIMER:
+            if (wParam == VBOXDND_GH_TIMER_HIDE)
+            {
+                KillTimer(hwnd, VBOXDND_GH_TIMER_HIDE);
+                if (!g_pszDnDGhFormat)
+                    vboxDnDGhReset(); /* No guest drag came. */
+            }
+            else if (wParam == VBOXDND_GH_TIMER_EXPIRE)
+                vboxDnDGhReset();
+            return 0;
+
         case WM_VBOXDND_QUIT:
             free(g_pDnDPendingEnter);
             g_pDnDPendingEnter = NULL;
             vboxDnDAbort();
+            vboxDnDGhReset();
+            if (g_pDnDDropTarget)
+            {
+                RevokeDragDrop(hwnd);
+                g_pDnDDropTarget->lpVtbl->Release(g_pDnDDropTarget);
+                g_pDnDDropTarget = NULL;
+            }
             DestroyWindow(hwnd);
             return 0;
 
@@ -1488,7 +2328,22 @@ static unsigned __stdcall vboxDnDUiThread(void *pvUser)
             g_hDnDUiDevice = VbglR3Open();
             rc = g_hDnDUiDevice != INVALID_HANDLE_VALUE ? vboxDnDConnect(g_hDnDUiDevice, &g_idDnDUiClient) : VERR_NOT_FOUND;
             if (RT_SUCCESS(rc))
+            {
                 fOk = TRUE;
+
+                /* Catches guest drags for the host; host to guest works without it. */
+                g_pDnDDropTarget = VBoxDnDDropTargetCreate();
+                if (g_pDnDDropTarget)
+                {
+                    HRESULT hr = RegisterDragDrop(g_hwndDnD, g_pDnDDropTarget);
+                    if (FAILED(hr))
+                    {
+                        VBoxTrayLogRel("DnD: RegisterDragDrop failed, hr=%#lx; no guest to host drag and drop\n", hr);
+                        g_pDnDDropTarget->lpVtbl->Release(g_pDnDDropTarget);
+                        g_pDnDDropTarget = NULL;
+                    }
+                }
+            }
             else
             {
                 VBoxTrayLogRel("DnD: connecting the window thread failed, rc=%d\n", rc);
@@ -1530,9 +2385,13 @@ static unsigned __stdcall vboxDnDUiThread(void *pvUser)
 static int vboxDnDProcessHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg)
 {
     VBOXDNDENTER *pEnter = NULL;
+    char szFormat[256];
     UINT32 x = 0;
     UINT32 y = 0;
     int rc;
+
+    if (uMsg != HOST_DND_FN_HG_EVT_MOVE && uMsg != HOST_DND_FN_GH_REQ_PENDING) /* Diagnostics; these come many per second. */
+        VBoxTrayLogRel("DnD: host message %lu\n", uMsg);
 
     switch (uMsg)
     {
@@ -1557,7 +2416,7 @@ static int vboxDnDProcessHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg)
         case HOST_DND_FN_HG_EVT_LEAVE:
         case HOST_DND_FN_CANCEL:
             rc = vboxDnDRecvSimple(hDevice, idClient, uMsg);
-            PostMessage(g_hwndDnD, WM_VBOXDND_LEAVE, 0, 0);
+            PostMessage(g_hwndDnD, uMsg == HOST_DND_FN_CANCEL ? WM_VBOXDND_CANCEL : WM_VBOXDND_LEAVE, 0, 0);
             /* The host waits 3 s for an answer to the leave (upstream sends none,
                so the host reports "Leaving VM window failed (VERR_TIMEOUT)"). */
             if (RT_SUCCESS(rc) && uMsg == HOST_DND_FN_HG_EVT_LEAVE)
@@ -1572,7 +2431,17 @@ static int vboxDnDProcessHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg)
             break;
 
         case HOST_DND_FN_GH_REQ_PENDING:
-            rc = vboxDnDAnswerPending(hDevice, idClient);
+            /* The window thread answers, once it knows. */
+            rc = vboxDnDRecvGhPending(hDevice, idClient);
+            if (RT_SUCCESS(rc))
+                PostMessage(g_hwndDnD, WM_VBOXDND_GH_PENDING, 0, 0);
+            break;
+
+        case HOST_DND_FN_GH_EVT_DROPPED:
+            rc = vboxDnDRecvGhDropped(hDevice, idClient, szFormat, sizeof(szFormat));
+            if (RT_SUCCESS(rc))
+                vboxDnDGhSend(hDevice, idClient, szFormat); /* Failures were reported to the host. */
+            PostMessage(g_hwndDnD, WM_VBOXDND_GH_RESET, TRUE /* dropped on the host */, 0);
             break;
 
         default:
@@ -1590,6 +2459,7 @@ static int vboxDnDProcessHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg)
 void VBoxDnDInit(void)
 {
     InitializeCriticalSection(&g_DnDCritSect);
+    g_hDnDGhDropped = CreateEvent(NULL, TRUE, FALSE, NULL);
 }
 
 /**
@@ -1677,8 +2547,9 @@ unsigned __stdcall VBoxDnDThread(void *pvUser)
             break; /* Disconnected by VBoxDnDStop. */
         else if (rc == VERR_CANCELLED)
         {
-            VBoxTrayLogRel("DnD: the host asked to quit\n");
-            break;
+            /* The host cancelled the current operation (HOST_DND_FN_CANCEL wakes waiters up this way). */
+            PostMessage(g_hwndDnD, WM_VBOXDND_CANCEL, 0, 0);
+            rc = VINF_SUCCESS;
         }
 
         if (RT_SUCCESS(rc))
