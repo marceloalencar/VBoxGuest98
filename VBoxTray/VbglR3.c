@@ -282,3 +282,38 @@ int VbglR3HgcmCall(HANDLE hDevice, VBOXGUEST98HGCMCALL *pCall, DWORD cbCall)
     rc = vbglR3DoIoCtl(hDevice, IOCTL_VBOXGUEST98_HGCM_CALL, pCall, cbCall, cbCall);
     return RT_SUCCESS(rc) ? pCall->rc : rc;
 }
+
+/**
+ * Queries the statistics reporting interval wanted by the host, acknowledging
+ * VMMDEV_EVENT_STATISTICS_INTERVAL_CHANGE_REQUEST (as upstream VbglR3StatQueryInterval).
+ *
+ * @returns VBox status code.
+ * @param   hDevice         The device handle.
+ * @param   pcMsInterval    Where to return the interval in milliseconds, 0 if
+ *                          the host doesn't want statistics.
+ */
+int VbglR3StatQueryInterval(HANDLE hDevice, DWORD *pcMsInterval)
+{
+    VMMDevGetStatisticsChangeRequest Req;
+    int rc;
+
+    vbglR3GRInit(&Req.header, sizeof(Req), VMMDevReq_GetStatisticsChangeRequest);
+    Req.eventAck        = VMMDEV_EVENT_STATISTICS_INTERVAL_CHANGE_REQUEST;
+    Req.u32StatInterval = 1;
+    rc = vbglR3GRPerform(hDevice, &Req.header);
+    if (RT_SUCCESS(rc))
+        *pcMsInterval = Req.u32StatInterval <= 0xffffffffU / 1000 ? Req.u32StatInterval * 1000 : 0xffffffffU;
+    return rc;
+}
+
+/**
+ * Reports guest statistics to the host.
+ */
+int VbglR3StatReport(HANDLE hDevice, const VBoxGuestStatistics *pStats)
+{
+    VMMDevReportGuestStats Req;
+
+    vbglR3GRInit(&Req.header, sizeof(Req), VMMDevReq_ReportGuestStats);
+    Req.guestStats = *pStats;
+    return vbglR3GRPerform(hDevice, &Req.header);
+}

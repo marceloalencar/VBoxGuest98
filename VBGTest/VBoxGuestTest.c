@@ -236,6 +236,42 @@ static void testTimeZone(HANDLE hDevice)
     }
 }
 
+static void testStatistics(HANDLE hDevice)
+{
+    VMMDevGetStatisticsChangeRequest ReqInterval;
+    VMMDevReportGuestStats ReqReport;
+    MEMORYSTATUS MemStatus;
+
+    /* Read the interval without acknowledging the change event (VBoxTray's job). */
+    initRequestHeader(&ReqInterval.header, sizeof(ReqInterval), VMMDevReq_GetStatisticsChangeRequest);
+    if (!doIoCtl(hDevice, IOCTL_VBOXGUEST98_VMMDEV_REQUEST, &ReqInterval, sizeof(ReqInterval), sizeof(ReqInterval)))
+    {
+        testFailed("VMMDEV_REQUEST(GetStatisticsChangeRequest)", "DeviceIoControl failed");
+        return;
+    }
+    printf("Stats interval:    %lu s (rc=%ld, 0 = host doesn't want statistics)\n",
+           (unsigned long)ReqInterval.u32StatInterval, (long)ReqInterval.header.rc);
+
+    /* Send one memory sample ourselves.  The host only records it when the
+       whole RAM group (total, free, balloon, cache, page file) is present. */
+    memset(&MemStatus, 0, sizeof(MemStatus));
+    MemStatus.dwLength = sizeof(MemStatus);
+    GlobalMemoryStatus(&MemStatus);
+    initRequestHeader(&ReqReport.header, sizeof(ReqReport), VMMDevReq_ReportGuestStats);
+    ReqReport.guestStats.u32PageSize     = 4096;
+    ReqReport.guestStats.u32PhysMemTotal = MemStatus.dwTotalPhys / 4096;
+    ReqReport.guestStats.u32PhysMemAvail = MemStatus.dwAvailPhys / 4096;
+    ReqReport.guestStats.u32PageFileSize = MemStatus.dwTotalPageFile / 4096;
+    ReqReport.guestStats.u32StatCaps     = VBOX_GUEST_STAT_PHYS_MEM_TOTAL | VBOX_GUEST_STAT_PHYS_MEM_AVAIL
+                                         | VBOX_GUEST_STAT_PHYS_MEM_BALLOON | VBOX_GUEST_STAT_MEM_SYSTEM_CACHE
+                                         | VBOX_GUEST_STAT_PAGE_FILE_SIZE;
+    if (!doIoCtl(hDevice, IOCTL_VBOXGUEST98_VMMDEV_REQUEST, &ReqReport, sizeof(ReqReport), sizeof(ReqReport)))
+        testFailed("VMMDEV_REQUEST(ReportGuestStats)", "DeviceIoControl failed");
+    else
+        printf("Stats report:      rc=%ld (total %lu KB, free %lu KB)\n", (long)ReqReport.header.rc,
+               (unsigned long)(MemStatus.dwTotalPhys / 1024), (unsigned long)(MemStatus.dwAvailPhys / 1024));
+}
+
 static void testRefusedRequest(HANDLE hDevice)
 {
     VMMDevEvents Req;
@@ -355,6 +391,7 @@ int __cdecl main(void)
     testVersionInfo(hDevice);
     testHostTime(hDevice);
     testTimeZone(hDevice);
+    testStatistics(hDevice);
     testRefusedRequest(hDevice);
     testWaitForEvents(hDevice);
     testGuestProperty(hDevice);

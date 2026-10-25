@@ -18,6 +18,11 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
   Guest text is ANSI (`CF_TEXT`, converted with the active code page); the
   host side is UTF-16. Host text is copied to the guest clipboard as soon as
   the host reports it.
+- Guest statistics, at the interval the host asks for (off unless guest metrics
+  are requested, e.g. `VBoxManage metrics setup`): physical memory, memory load,
+  disk cache, swap file, processes, threads and CPU load (from the Windows 9x
+  `KERNEL\CPUUsage` counter, which has no kernel/user split: all busy time is
+  reported as user time).
 - Reports the VBoxTrayClient facility status to the host.
 
 ## VBoxGst features
@@ -54,6 +59,7 @@ to VxDs on Windows 98.
 | `VBoxTray/Mouse.c` | Mouse pointer integration |
 | `VBoxTray/TimeSync.c` | Guest clock synchronization |
 | `VBoxTray/Clipboard.c` | Shared clipboard (text) |
+| `VBoxTray/Stats.c` | Guest statistics |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 

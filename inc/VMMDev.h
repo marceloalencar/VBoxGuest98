@@ -435,6 +435,70 @@ typedef struct
     VMMDevPowerState powerState;
 } VMMDevPowerStateRequest;
 
+/** Guest statistics (VMMDevReq_ReportGuestStats).  Memory sizes are in 4KB
+ *  pages, loads in percent (0-100) over the last interval. */
+typedef struct VBoxGuestStatistics
+{
+    /** Virtual CPU ID. */
+    UINT32 u32CpuId;
+    /** Valid fields (VBOX_GUEST_STAT_XXX). */
+    UINT32 u32StatCaps;
+    UINT32 u32CpuLoad_Idle;
+    UINT32 u32CpuLoad_Kernel;
+    UINT32 u32CpuLoad_User;
+    UINT32 u32Threads;
+    UINT32 u32Processes;
+    UINT32 u32Handles;
+    UINT32 u32MemoryLoad;
+    UINT32 u32PageSize;
+    UINT32 u32PhysMemTotal;
+    UINT32 u32PhysMemAvail;
+    UINT32 u32PhysMemBalloon;
+    UINT32 u32MemCommitTotal;
+    UINT32 u32MemKernelTotal;
+    UINT32 u32MemKernelPaged;
+    UINT32 u32MemKernelNonPaged;
+    UINT32 u32MemSystemCache;
+    UINT32 u32PageFileSize;
+} VBoxGuestStatistics;
+
+/** @name VBoxGuestStatistics::u32StatCaps
+ * @{ */
+#define VBOX_GUEST_STAT_CPU_LOAD_IDLE       (1U << 0)
+#define VBOX_GUEST_STAT_CPU_LOAD_KERNEL     (1U << 1)
+#define VBOX_GUEST_STAT_CPU_LOAD_USER       (1U << 2)
+#define VBOX_GUEST_STAT_THREADS             (1U << 3)
+#define VBOX_GUEST_STAT_PROCESSES           (1U << 4)
+#define VBOX_GUEST_STAT_HANDLES             (1U << 5)
+#define VBOX_GUEST_STAT_MEMORY_LOAD         (1U << 6)
+#define VBOX_GUEST_STAT_PHYS_MEM_TOTAL      (1U << 7)
+#define VBOX_GUEST_STAT_PHYS_MEM_AVAIL      (1U << 8)
+#define VBOX_GUEST_STAT_PHYS_MEM_BALLOON    (1U << 9)
+#define VBOX_GUEST_STAT_MEM_COMMIT_TOTAL    (1U << 10)
+#define VBOX_GUEST_STAT_MEM_KERNEL_TOTAL    (1U << 11)
+#define VBOX_GUEST_STAT_MEM_KERNEL_PAGED    (1U << 12)
+#define VBOX_GUEST_STAT_MEM_KERNEL_NONPAGED (1U << 13)
+#define VBOX_GUEST_STAT_MEM_SYSTEM_CACHE    (1U << 14)
+#define VBOX_GUEST_STAT_PAGE_FILE_SIZE      (1U << 15)
+/** @} */
+
+/** VMMDevReq_ReportGuestStats. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    VBoxGuestStatistics guestStats;
+} VMMDevReportGuestStats;
+
+/** VMMDevReq_GetStatisticsChangeRequest. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    /** OUT: Reporting interval in seconds, 0 = don't report. */
+    UINT32 u32StatInterval;
+    /** IN: VMMDEV_EVENT_STATISTICS_INTERVAL_CHANGE_REQUEST when answering that event. */
+    UINT32 eventAck;
+} VMMDevGetStatisticsChangeRequest;
+
 /** VMMDevReq_HeartbeatConfigure.  Must be exactly 24 + 12 bytes, the host
  *  refuses any other size with VERR_INVALID_PARAMETER. */
 typedef struct
@@ -644,6 +708,9 @@ VMMDEV_ASSERT_SIZE(VMMDevReqGuestCapabilities2, 24+8);
 VMMDEV_ASSERT_SIZE(VMMDevReportGuestStatus, 24+12);
 VMMDEV_ASSERT_SIZE(VMMDevPowerStateRequest, 24+4);
 VMMDEV_ASSERT_SIZE(VMMDevReqHeartbeat, 24+12);
+VMMDEV_ASSERT_SIZE(VBoxGuestStatistics, 19*4);
+VMMDEV_ASSERT_SIZE(VMMDevReportGuestStats, 24+19*4);
+VMMDEV_ASSERT_SIZE(VMMDevGetStatisticsChangeRequest, 24+8);
 VMMDEV_ASSERT_SIZE(VMMDevHGCMRequestHeader, 24+8);
 VMMDEV_ASSERT_SIZE(VMMDevHGCMConnect, 32+132+4);
 VMMDEV_ASSERT_SIZE(VMMDevHGCMDisconnect, 32+4);

@@ -6,6 +6,7 @@
  *  - Mouse.c      Mouse pointer integration (absolute positioning).
  *  - TimeSync.c   Guest clock synchronization with the host.
  *  - Clipboard.c  Shared clipboard (text).
+ *  - Stats.c      Guest statistics (memory, processes, CPU load).
  *  - VbglR3.c     Access to the VBoxGst driver (VBoxGuest98.h interface).
  */
 
@@ -34,6 +35,8 @@ int    VbglR3ReportFacilityStatus(HANDLE hDevice, VBoxGuestFacilityType enmFacil
 int    VbglR3HgcmConnect(HANDLE hDevice, const char *pszService, UINT32 *pidClient);
 int    VbglR3HgcmDisconnect(HANDLE hDevice, UINT32 idClient);
 int    VbglR3HgcmCall(HANDLE hDevice, VBOXGUEST98HGCMCALL *pCall, DWORD cbCall);
+int    VbglR3StatQueryInterval(HANDLE hDevice, DWORD *pcMsInterval);
+int    VbglR3StatReport(HANDLE hDevice, const VBoxGuestStatistics *pStats);
 
 
 /*********************************************************************************************************************************
@@ -47,6 +50,7 @@ extern HWND g_hwndVBoxTray;
 
 unsigned __stdcall VBoxMouseThread(void *pvUser);
 unsigned __stdcall VBoxTimeSyncThread(void *pvUser);
+unsigned __stdcall VBoxStatsThread(void *pvUser);
 
 void     VBoxClipboardInit(void);
 void     VBoxClipboardStop(void);

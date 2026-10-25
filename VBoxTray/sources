@@ -11,6 +11,7 @@ SOURCES= \
         Mouse.c \
         TimeSync.c \
         Clipboard.c \
+        Stats.c \
         VbglR3.c \
         VBoxTray.rc
 
