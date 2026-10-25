@@ -13,13 +13,17 @@ SOURCES= \
         Clipboard.c \
         Stats.c \
         Display.c \
+        DnD.c \
+        DnDObj.c \
         VbglR3.c \
         VBoxTray.rc
 
 TARGETLIBS= \
         $(SDK_LIB_PATH)\setupapi.lib \
+        $(SDK_LIB_PATH)\ole32.lib \
         $(SDK_LIB_PATH)\shell32.lib \
-        $(SDK_LIB_PATH)\user32.lib
+        $(SDK_LIB_PATH)\user32.lib \
+        $(SDK_LIB_PATH)\uuid.lib
 
 LIB=$(MSVCDIR)\lib
 INCLUDE=$(MSVCDIR)\include

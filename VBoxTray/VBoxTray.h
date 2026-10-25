@@ -8,6 +8,7 @@
  *  - Clipboard.c  Shared clipboard (text).
  *  - Stats.c      Guest statistics (memory, processes, CPU load).
  *  - Display.c    Resizing the guest display to the host window.
+ *  - DnD.c        Drag and drop from the host (DnDObj.c: its OLE objects).
  *  - VbglR3.c     Access to the VBoxGst driver (VBoxGuest98.h interface).
  */
 
@@ -66,5 +67,9 @@ void     VBoxClipboardInit(void);
 void     VBoxClipboardStop(void);
 unsigned __stdcall VBoxClipboardThread(void *pvUser);
 BOOL     VBoxClipboardWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT *plResult);
+
+void     VBoxDnDInit(void);
+void     VBoxDnDStop(void);
+unsigned __stdcall VBoxDnDThread(void *pvUser);
 
 #endif /* !VBOXTRAY_H */

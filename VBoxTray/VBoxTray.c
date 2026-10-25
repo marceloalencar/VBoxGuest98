@@ -2,7 +2,7 @@
  * VBoxTray - Guest Additions tray application for Windows 98/ME.
  *
  * Runs the service threads (mouse integration, time synchronization, shared
- * clipboard, guest statistics, display resizing) and shows a tray icon with
+ * clipboard, guest statistics, display resizing, drag and drop) and shows a tray icon with
  * an Exit command.  Started at logon
  * through the Run registry key (see VBoxGst.inf).
  */
@@ -69,6 +69,7 @@ static VBOXTRAYSERVICE g_aServices[] =
     { "Clipboard", VBoxClipboardInit, VBoxClipboardThread, VBoxClipboardStop, NULL },
     { "Stats",     NULL,              VBoxStatsThread,     NULL,              NULL },
     { "Display",   NULL,              VBoxDisplayThread,   NULL,              NULL },
+    { "DnD",       VBoxDnDInit,       VBoxDnDThread,       VBoxDnDStop,       NULL },
 };
 
 static HINSTANCE g_hInstance;

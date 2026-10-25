@@ -33,13 +33,20 @@
 #define VERR_PERMISSION_DENIED          (-10)
 #define VERR_VERSION_MISMATCH           (-11)
 #define VERR_NOT_IMPLEMENTED            (-12)
+#define VERR_WRONG_ORDER                (-22)
 #define VERR_NOT_SUPPORTED              (-37)
 #define VERR_INTERRUPTED                (-39)
 #define VERR_TIMEOUT                    (-40)
 #define VERR_BUFFER_OVERFLOW            (-41)
 #define VERR_TOO_MUCH_DATA              (-42)
 #define VERR_OUT_OF_RANGE               (-54)
+#define VERR_CANCELLED                  (-70)
 #define VERR_NOT_FOUND                  (-78)
+#define VERR_OPEN_FAILED                (-101)
+#define VERR_PATH_NOT_FOUND             (-103)
+#define VERR_INVALID_NAME               (-104)
+#define VERR_WRITE_ERROR                (-112)
+#define VERR_FILENAME_TOO_LONG          (-120)
 #define VERR_INTERNAL_ERROR             (-225)
 #define VINF_BUFFER_OVERFLOW            (41)
 #define VINF_HGCM_ASYNC_EXECUTE         (2903)
@@ -716,6 +723,76 @@ typedef struct
 #define VBOX_SHCL_FMT_HTML                              (1U << 2)
 #define VBOX_SHCL_FMT_URI_LIST                          (1U << 3)
 #define VBOX_SHCL_FMT_VALID_MASK                        (0x0000000fU)
+/** @} */
+
+
+/*********************************************************************************************************************************
+*   Drag and drop HGCM service, protocol v3 (used by VBoxTray)                                                                   *
+*********************************************************************************************************************************/
+
+#define VBOX_DND_SERVICE_NAME                           "VBoxDragAndDropSvc"
+
+/** @name Host messages (returned by GUEST_DND_FN_GET_NEXT_HOST_MSG).  The
+ *  guest fetches a message's parameters by calling the message number as
+ *  the function.
+ * @{ */
+#define HOST_DND_FN_SET_MODE                            100
+#define HOST_DND_FN_HG_EVT_ENTER                        200
+#define HOST_DND_FN_HG_EVT_MOVE                         201
+#define HOST_DND_FN_HG_EVT_LEAVE                        202
+#define HOST_DND_FN_HG_EVT_DROPPED                      203
+#define HOST_DND_FN_CANCEL                              204
+#define HOST_DND_FN_HG_SND_DATA                         205
+#define HOST_DND_FN_HG_SND_MORE_DATA                    206
+#define HOST_DND_FN_HG_SND_DIR                          207
+#define HOST_DND_FN_HG_SND_FILE_DATA                    208
+#define HOST_DND_FN_HG_SND_FILE_HDR                     209
+#define HOST_DND_FN_HG_SND_DATA_HDR                     210
+#define HOST_DND_FN_GH_REQ_PENDING                      600
+#define HOST_DND_FN_GH_EVT_DROPPED                      601
+/** @} */
+
+/** @name Guest functions.
+ * @{ */
+#define GUEST_DND_FN_CONNECT                            10
+#define GUEST_DND_FN_DISCONNECT                         11
+#define GUEST_DND_FN_REPORT_FEATURES                    12
+#define GUEST_DND_FN_QUERY_FEATURES                     13
+#define GUEST_DND_FN_GET_NEXT_HOST_MSG                  300
+#define GUEST_DND_FN_HG_ACK_OP                          400
+#define GUEST_DND_FN_HG_REQ_DATA                        401
+#define GUEST_DND_FN_HG_EVT_PROGRESS                    402
+#define GUEST_DND_FN_GH_ACK_PENDING                     500
+#define GUEST_DND_FN_GH_SND_DATA                        501
+#define GUEST_DND_FN_EVT_ERROR                          502
+#define GUEST_DND_FN_GH_SND_DATA_HDR                    503
+/** @} */
+
+/** Protocol version sent with GUEST_DND_FN_CONNECT (deprecated since 6.1). */
+#define VBOX_DND_PROTOCOL_VERSION                       3
+/** Guest features: none.  The second GUEST_DND_FN_REPORT_FEATURES
+ *  parameter must have VBOX_DND_GF_1_MUST_BE_ONE set. */
+#define VBOX_DND_GF_NONE                                0
+#define VBOX_DND_GF_1_MUST_BE_ONE                       0x8000000000000000ui64
+/** Chunk size used for transfers (DND_DEFAULT_CHUNK_SIZE). */
+#define VBOX_DND_CHUNK_SIZE                             (64 * 1024)
+/** Separator of the format list in HOST_DND_FN_HG_EVT_ENTER. */
+#define VBOX_DND_FORMATS_SEPARATOR                      "\r\n"
+
+/** @name Actions (VBOX_DND_ACTION_XXX).
+ * @{ */
+#define VBOX_DND_ACTION_IGNORE                          0
+#define VBOX_DND_ACTION_COPY                            (1U << 0)
+#define VBOX_DND_ACTION_MOVE                            (1U << 1)
+#define VBOX_DND_ACTION_LINK                            (1U << 2)
+/** @} */
+
+/** @name Progress status (GUEST_DND_FN_HG_EVT_PROGRESS).
+ * @{ */
+#define DND_PROGRESS_RUNNING                            1
+#define DND_PROGRESS_COMPLETE                           2
+#define DND_PROGRESS_CANCELLED                          3
+#define DND_PROGRESS_ERROR                              4
 /** @} */
 
 #pragma pack(pop)
