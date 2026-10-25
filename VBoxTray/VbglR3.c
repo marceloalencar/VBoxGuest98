@@ -317,3 +317,48 @@ int VbglR3StatReport(HANDLE hDevice, const VBoxGuestStatistics *pStats)
     Req.guestStats = *pStats;
     return vbglR3GRPerform(hDevice, &Req.header);
 }
+
+/**
+ * Changes the guest capabilities (VMMDEV_GUEST_SUPPORTS_XXX) this handle
+ * reports.  They are withdrawn when the handle is closed.
+ */
+int VbglR3ChangeGuestCapabilities(HANDLE hDevice, UINT32 fOrMask, UINT32 fNotMask)
+{
+    VBOXGUEST98CHANGEMASK Mask;
+    Mask.fOrMask  = fOrMask;
+    Mask.fNotMask = fNotMask;
+    return vbglR3DoIoCtl(hDevice, IOCTL_VBOXGUEST98_CHANGE_GUEST_CAPABILITIES, &Mask, sizeof(Mask), 0);
+}
+
+/**
+ * Gets the display resolution the host wants (as upstream VbglR3GetDisplayChangeRequest).
+ *
+ * @returns VBox status code.
+ * @param   hDevice     The device handle.
+ * @param   pcx         Where to return the width, 0 = keep.
+ * @param   pcy         Where to return the height, 0 = keep.
+ * @param   pcBits      Where to return the bits per pixel, 0 = keep.
+ * @param   piDisplay   Where to return the display number (0 = primary).
+ * @param   pfEnabled   Where to return whether the display is enabled.
+ * @param   fAck        Whether this answers VMMDEV_EVENT_DISPLAY_CHANGE_REQUEST.
+ */
+int VbglR3GetDisplayChangeRequest(HANDLE hDevice, UINT32 *pcx, UINT32 *pcy, UINT32 *pcBits, UINT32 *piDisplay,
+                                  BOOL *pfEnabled, BOOL fAck)
+{
+    VMMDevDisplayChangeRequestEx Req;
+    int rc;
+
+    vbglR3GRInit(&Req.header, sizeof(Req), VMMDevReq_GetDisplayChangeRequestEx);
+    if (fAck)
+        Req.eventAck = VMMDEV_EVENT_DISPLAY_CHANGE_REQUEST;
+    rc = vbglR3GRPerform(hDevice, &Req.header);
+    if (RT_SUCCESS(rc))
+    {
+        *pcx       = Req.xres;
+        *pcy       = Req.yres;
+        *pcBits    = Req.bpp;
+        *piDisplay = Req.display;
+        *pfEnabled = Req.fEnabled;
+    }
+    return rc;
+}

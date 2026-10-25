@@ -12,6 +12,7 @@ SOURCES= \
         TimeSync.c \
         Clipboard.c \
         Stats.c \
+        Display.c \
         VbglR3.c \
         VBoxTray.rc
 

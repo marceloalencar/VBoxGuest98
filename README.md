@@ -23,6 +23,11 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
   disk cache, swap file, processes, threads and CPU load (from the Windows 9x
   `KERNEL\CPUUsage` counter, which has no kernel/user split: all busy time is
   reported as user time).
+- Display resizing ("Auto-resize Guest Display"): reports graphics support and
+  switches to the resolution the host asks for. Needs a display driver with
+  several modes, such as [vmdisp9x](https://github.com/JHRobotics/vmdisp9x) (part
+  of SoftGPU); when the exact resolution isn't available the largest mode that
+  fits is used, and the color depth is kept.
 - Reports the VBoxTrayClient facility status to the host.
 
 ## VBoxGst features
@@ -60,6 +65,7 @@ to VxDs on Windows 98.
 | `VBoxTray/TimeSync.c` | Guest clock synchronization |
 | `VBoxTray/Clipboard.c` | Shared clipboard (text) |
 | `VBoxTray/Stats.c` | Guest statistics |
+| `VBoxTray/Display.c` | Display resizing |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 

@@ -435,6 +435,30 @@ typedef struct
     VMMDevPowerState powerState;
 } VMMDevPowerStateRequest;
 
+/** VMMDevReq_GetDisplayChangeRequestEx: the resolution the host wants. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    /** OUT: Horizontal resolution, 0 = don't change. */
+    UINT32 xres;
+    /** OUT: Vertical resolution, 0 = don't change. */
+    UINT32 yres;
+    /** OUT: Bits per pixel, 0 = don't change. */
+    UINT32 bpp;
+    /** IN: VMMDEV_EVENT_DISPLAY_CHANGE_REQUEST when answering that event. */
+    UINT32 eventAck;
+    /** OUT: Display, 0 = primary. */
+    UINT32 display;
+    /** OUT: Origin of a secondary display. */
+    UINT32 cxOrigin;
+    UINT32 cyOrigin;
+    /** OUT: Whether the origin changes. */
+    BOOLEAN fChangeOrigin;
+    /** OUT: Whether the display is enabled. */
+    BOOLEAN fEnabled;
+    UCHAR   abPadding[2];
+} VMMDevDisplayChangeRequestEx;
+
 /** Guest statistics (VMMDevReq_ReportGuestStats).  Memory sizes are in 4KB
  *  pages, loads in percent (0-100) over the last interval. */
 typedef struct VBoxGuestStatistics
@@ -708,6 +732,7 @@ VMMDEV_ASSERT_SIZE(VMMDevReqGuestCapabilities2, 24+8);
 VMMDEV_ASSERT_SIZE(VMMDevReportGuestStatus, 24+12);
 VMMDEV_ASSERT_SIZE(VMMDevPowerStateRequest, 24+4);
 VMMDEV_ASSERT_SIZE(VMMDevReqHeartbeat, 24+12);
+VMMDEV_ASSERT_SIZE(VMMDevDisplayChangeRequestEx, 24+32);
 VMMDEV_ASSERT_SIZE(VBoxGuestStatistics, 19*4);
 VMMDEV_ASSERT_SIZE(VMMDevReportGuestStats, 24+19*4);
 VMMDEV_ASSERT_SIZE(VMMDevGetStatisticsChangeRequest, 24+8);
