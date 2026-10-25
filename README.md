@@ -26,8 +26,10 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 - Display resizing ("Auto-resize Guest Display"): reports graphics support and
   switches to the resolution the host asks for. Needs a display driver with
   several modes, such as [vmdisp9x](https://github.com/JHRobotics/vmdisp9x) (part
-  of SoftGPU); when the exact resolution isn't available the largest mode that
-  fits is used, and the color depth is kept.
+  of SoftGPU). When the exact resolution isn't in the driver's mode list,
+  VBoxTray adds it (`MODES` key under the display driver key; only the last
+  mode it added is kept); if that fails, the largest listed mode that fits is
+  used. The color depth is kept.
 - Reports the VBoxTrayClient facility status to the host.
 
 ## VBoxGst features

@@ -7,10 +7,15 @@
  * VMMDEV_EVENT_DISPLAY_CHANGE_REQUEST, read the wanted resolution with
  * VMMDevReq_GetDisplayChangeRequestEx and switch with ChangeDisplaySettings.
  *
- * Differences from upstream, because Windows 98 display drivers (vmdisp9x)
- * have a fixed mode list:
- *  - If the exact resolution isn't offered, the largest mode that fits the
- *    host window is used instead of giving up.
+ * Differences from upstream, because Windows 98 takes the mode list from the
+ * registry (MODES\{bpp}\{width},{height} keys under the display driver key,
+ * written by the driver INF) while the driver (vmdisp9x) itself accepts any
+ * resolution that fits in video memory:
+ *  - If the exact resolution isn't offered, its MODES key is added and the
+ *    switch is tried.  Only the last mode VBoxTray added is kept (remembered
+ *    under VBOXDISPLAY_STATE_KEY); modes from the INF are never touched.
+ *  - If that fails, the largest offered mode that fits the host window is
+ *    used instead of giving up.
  *  - The color depth is kept: changing it usually requires a restart on
  *    Windows 98.
  *  - Only the primary display is handled.
@@ -26,6 +31,13 @@
 
 /** How often to check for shutdown (ms). */
 #define VBOXDISPLAY_POLL_MS         1000
+/** Windows 9x display driver keys (HKLM), one numbered subkey per adapter. */
+#define VBOXDISPLAY_CLASS_KEY       "System\\CurrentControlSet\\Services\\Class\\Display"
+/** Where VBoxTray remembers the mode key it added (HKLM, value "AddedMode"). */
+#define VBOXDISPLAY_STATE_KEY       "Software\\VBoxGuest98\\Display"
+/** Smallest mode added; the driver forces anything smaller to 640x480. */
+#define VBOXDISPLAY_MIN_CX          640
+#define VBOXDISPLAY_MIN_CY          480
 
 
 /**
@@ -95,7 +107,147 @@ static BOOL vboxDisplayFindMode(DWORD cx, DWORD cy, DWORD cBits, DEVMODE *pMode)
 }
 
 /**
- * Switches to the mode closest to the requested resolution.
+ * Checks whether a registry key exists (HKLM).
+ */
+static BOOL vboxDisplayKeyExists(const char *pszKey)
+{
+    HKEY hKey;
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, pszKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return FALSE;
+    RegCloseKey(hKey);
+    return TRUE;
+}
+
+/**
+ * Finds the registry key of the active display driver: the Class\Display
+ * subkey whose mode list contains the current mode and which names a driver.
+ *
+ * @returns TRUE if found.
+ * @param   pCurrent    The current mode.
+ * @param   pszKey      Where to return the key (relative to HKLM).
+ * @param   cbKey       Size of the buffer, at least MAX_PATH.
+ */
+static BOOL vboxDisplayFindDriverKey(const DEVMODE *pCurrent, char *pszKey, DWORD cbKey)
+{
+    char szSubKey[16];
+    char szProbe[MAX_PATH];
+    DWORD cbValue;
+    HKEY hClass;
+    HKEY hDefault;
+    DWORD iKey;
+    BOOL fFound = FALSE;
+
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, VBOXDISPLAY_CLASS_KEY, 0, KEY_READ, &hClass) != ERROR_SUCCESS)
+        return FALSE;
+
+    for (iKey = 0; !fFound; iKey++)
+    {
+        DWORD cchSubKey = sizeof(szSubKey);
+        if (RegEnumKeyEx(hClass, iKey, szSubKey, &cchSubKey, NULL, NULL, NULL, NULL) != ERROR_SUCCESS)
+            break;
+
+        wsprintf(szProbe, "%s\\%s\\MODES\\%lu\\%lu,%lu", VBOXDISPLAY_CLASS_KEY, szSubKey,
+                 pCurrent->dmBitsPerPel, pCurrent->dmPelsWidth, pCurrent->dmPelsHeight);
+        if (!vboxDisplayKeyExists(szProbe))
+            continue;
+
+        wsprintf(szProbe, "%s\\%s\\DEFAULT", VBOXDISPLAY_CLASS_KEY, szSubKey);
+        if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, szProbe, 0, KEY_READ, &hDefault) != ERROR_SUCCESS)
+            continue;
+        cbValue = 0;
+        fFound = RegQueryValueEx(hDefault, "drv", NULL, NULL, NULL, &cbValue) == ERROR_SUCCESS && cbValue > 1;
+        RegCloseKey(hDefault);
+        if (fFound)
+        {
+            wsprintf(szProbe, "%s\\%s", VBOXDISPLAY_CLASS_KEY, szSubKey);
+            lstrcpyn(pszKey, szProbe, cbKey);
+        }
+    }
+
+    RegCloseKey(hClass);
+    return fFound;
+}
+
+/**
+ * Reads or writes the mode key VBoxTray added last.
+ *
+ * @param   pszMode     The key, relative to HKLM.  When reading, a MAX_PATH
+ *                      buffer that receives it (empty string if none).
+ * @param   fWrite      TRUE to store pszMode, FALSE to read it.
+ */
+static void vboxDisplayAddedMode(char *pszMode, BOOL fWrite)
+{
+    DWORD cbValue = MAX_PATH;
+    HKEY hKey;
+
+    if (fWrite)
+    {
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, VBOXDISPLAY_STATE_KEY, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL)
+            == ERROR_SUCCESS)
+        {
+            RegSetValueEx(hKey, "AddedMode", 0, REG_SZ, (const BYTE *)pszMode, lstrlen(pszMode) + 1);
+            RegCloseKey(hKey);
+        }
+        return;
+    }
+
+    pszMode[0] = '\0';
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, VBOXDISPLAY_STATE_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS)
+    {
+        if (RegQueryValueEx(hKey, "AddedMode", NULL, NULL, (LPBYTE)pszMode, &cbValue) != ERROR_SUCCESS)
+            pszMode[0] = '\0';
+        pszMode[MAX_PATH - 1] = '\0';
+        RegCloseKey(hKey);
+    }
+}
+
+/**
+ * Tries to switch to an exact resolution the driver doesn't list, by adding
+ * it to the mode list first.  The previously added mode is removed.
+ *
+ * @returns TRUE if the display now uses the resolution.
+ * @param   pCurrent    The current mode.
+ * @param   cx          Wanted width.
+ * @param   cy          Wanted height.
+ */
+static BOOL vboxDisplayResizeExact(const DEVMODE *pCurrent, DWORD cx, DWORD cy)
+{
+    char szDriverKey[MAX_PATH];
+    char szMode[MAX_PATH];
+    char szPrevMode[MAX_PATH];
+    DEVMODE Mode;
+    HKEY hKey;
+
+    if (cx < VBOXDISPLAY_MIN_CX || cy < VBOXDISPLAY_MIN_CY)
+        return FALSE;
+    if (!vboxDisplayFindDriverKey(pCurrent, szDriverKey, sizeof(szDriverKey)))
+        return FALSE;
+
+    wsprintf(szMode, "%s\\MODES\\%lu\\%lu,%lu", szDriverKey, pCurrent->dmBitsPerPel, cx, cy);
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, szMode, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+        return FALSE;
+    RegCloseKey(hKey);
+
+    Mode = *pCurrent;
+    Mode.dmPelsWidth  = cx;
+    Mode.dmPelsHeight = cy;
+    Mode.dmFields     = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
+    if (ChangeDisplaySettings(&Mode, CDS_UPDATEREGISTRY) != DISP_CHANGE_SUCCESSFUL)
+    {
+        RegDeleteKey(HKEY_LOCAL_MACHINE, szMode);
+        return FALSE;
+    }
+
+    /* The new mode is in use now; forget the one added before. */
+    vboxDisplayAddedMode(szPrevMode, FALSE);
+    if (szPrevMode[0] && lstrcmpi(szPrevMode, szMode) != 0)
+        RegDeleteKey(HKEY_LOCAL_MACHINE, szPrevMode);
+    vboxDisplayAddedMode(szMode, TRUE);
+    return TRUE;
+}
+
+/**
+ * Switches to the requested resolution, or the closest offered one.
  *
  * @param   cx      Wanted width, 0 = keep.
  * @param   cy      Wanted height, 0 = keep.
@@ -111,9 +263,23 @@ static void vboxDisplayResize(DWORD cx, DWORD cy)
         cx = Current.dmPelsWidth;
     if (!cy)
         cy = Current.dmPelsHeight;
+    cx &= ~7U; /* Keep the width a multiple of 8, like the VirtualBox video drivers. */
     if (cx == Current.dmPelsWidth && cy == Current.dmPelsHeight)
         return;
 
+    if (   vboxDisplayFindMode(cx, cy, Current.dmBitsPerPel, &Mode)
+        && Mode.dmPelsWidth == cx
+        && Mode.dmPelsHeight == cy)
+    {
+        Mode.dmFields = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
+        ChangeDisplaySettings(&Mode, CDS_UPDATEREGISTRY);
+        return;
+    }
+
+    if (vboxDisplayResizeExact(&Current, cx, cy))
+        return;
+
+    /* Fall back to the largest offered mode that fits. */
     if (!vboxDisplayFindMode(cx, cy, Current.dmBitsPerPel, &Mode))
         return;
     if (Mode.dmPelsWidth == Current.dmPelsWidth && Mode.dmPelsHeight == Current.dmPelsHeight)
