@@ -1,0 +1,519 @@
+/** @file
+ * VMMDev - Guest <-> VirtualBox host protocol definitions.
+ *
+ * Subset of include/VBox/VMMDev.h, include/VBox/VMMDevCoreTypes.h,
+ * include/VBox/HostServices/GuestPropertySvc.h and include/iprt/err.h from
+ * VirtualBox 6.1.6, rewritten in C89 so it builds with Visual C++ 6.0 and the
+ * Windows 2000 DDK.
+ *
+ * This header has no kernel dependencies and is shared by the driver
+ * (VBoxGst) and user mode tools (VBGTest).  Include <wdm.h> or <windows.h>
+ * before it.
+ */
+
+#ifndef VBOXGUEST98_VMMDEV_H
+#define VBOXGUEST98_VMMDEV_H
+
+#pragma pack(push, 4)
+
+/*********************************************************************************************************************************
+*   VirtualBox status codes (subset of iprt/err.h)                                                                              *
+*********************************************************************************************************************************/
+
+#define VINF_SUCCESS                    (0)
+#define VERR_GENERAL_FAILURE            (-1)
+#define VERR_INVALID_PARAMETER          (-2)
+#define VERR_INVALID_HANDLE             (-4)
+#define VERR_INVALID_POINTER            (-6)
+#define VERR_NO_MEMORY                  (-8)
+#define VERR_PERMISSION_DENIED          (-10)
+#define VERR_VERSION_MISMATCH           (-11)
+#define VERR_NOT_IMPLEMENTED            (-12)
+#define VERR_NOT_SUPPORTED              (-37)
+#define VERR_INTERRUPTED                (-39)
+#define VERR_TIMEOUT                    (-40)
+#define VERR_BUFFER_OVERFLOW            (-41)
+#define VERR_TOO_MUCH_DATA              (-42)
+#define VERR_OUT_OF_RANGE               (-54)
+#define VERR_NOT_FOUND                  (-78)
+#define VERR_INTERNAL_ERROR             (-225)
+#define VINF_HGCM_ASYNC_EXECUTE         (2903)
+
+#define RT_SUCCESS(rc)                  ((int)(rc) >= VINF_SUCCESS)
+#define RT_FAILURE(rc)                  (!RT_SUCCESS(rc))
+
+
+/*********************************************************************************************************************************
+*   Guest OS type                                                                                                                *
+*********************************************************************************************************************************/
+
+typedef enum VBOXOSTYPE
+{
+    VBOXOSTYPE_UNKNOWN    = 0,
+    VBOXOSTYPE_WIN95      = 0x21000,
+    VBOXOSTYPE_WIN98      = 0x22000,
+    VBOXOSTYPE_WINME      = 0x23000,
+    VBOXOSTYPE_32BIT_HACK = 0x7fffffff
+} VBOXOSTYPE;
+
+
+/*********************************************************************************************************************************
+*   VMMDev PCI device                                                                                                            *
+*********************************************************************************************************************************/
+
+/** PCI vendor and device ID of the VMMDev. */
+#define VMMDEV_VENDORID                 0x80ee
+#define VMMDEV_DEVICEID                 0xcafe
+
+/** Port for generic request interface (relative offset). */
+#define VMMDEV_PORT_OFF_REQUEST         0
+
+/** Version of the shared memory (VMMDevMemory) structure. */
+#define VMMDEV_MEMORY_VERSION           (1)
+/** Version of the guest <-> host interface (VMMDevReportGuestInfo). */
+#define VMMDEV_VERSION                  (0x00010004)
+/** Version of VMMDevRequestHeader. */
+#define VMMDEV_REQUEST_HEADER_VERSION   (0x10001)
+
+/** The VMMDev shared memory, mapped through the PCI MMIO BAR. */
+typedef struct VMMDevMemory
+{
+    /** The size of this structure. */
+    UINT32 u32Size;
+    /** The structure version (VMMDEV_MEMORY_VERSION). */
+    UINT32 u32Version;
+    union
+    {
+        struct
+        {
+            /** Flag telling that VMMDev has events pending (i.e. IRQ is ours). */
+            BOOLEAN fHaveEvents;
+        } V1_04;
+        struct
+        {
+            UINT32 u32HostEvents;
+            UINT32 u32GuestEventMask;
+        } V1_03;
+    } V;
+} VMMDevMemory;
+
+
+/*********************************************************************************************************************************
+*   Events                                                                                                                       *
+*********************************************************************************************************************************/
+
+#define VMMDEV_EVENT_MOUSE_CAPABILITIES_CHANGED             (1U << 0)
+#define VMMDEV_EVENT_HGCM                                   (1U << 1)
+#define VMMDEV_EVENT_DISPLAY_CHANGE_REQUEST                 (1U << 2)
+#define VMMDEV_EVENT_JUDGE_CREDENTIALS                      (1U << 3)
+#define VMMDEV_EVENT_RESTORED                               (1U << 4)
+#define VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST           (1U << 5)
+#define VMMDEV_EVENT_BALLOON_CHANGE_REQUEST                 (1U << 6)
+#define VMMDEV_EVENT_STATISTICS_INTERVAL_CHANGE_REQUEST     (1U << 7)
+#define VMMDEV_EVENT_VRDP                                   (1U << 8)
+#define VMMDEV_EVENT_MOUSE_POSITION_CHANGED                 (1U << 9)
+#define VMMDEV_EVENT_CPU_HOTPLUG                            (1U << 10)
+#define VMMDEV_EVENT_VALID_EVENT_MASK                       (0x000007ffU)
+
+
+/*********************************************************************************************************************************
+*   Requests                                                                                                                     *
+*********************************************************************************************************************************/
+
+typedef enum VMMDevRequestType
+{
+    VMMDevReq_InvalidRequest            =   0,
+    VMMDevReq_GetMouseStatus            =   1,
+    VMMDevReq_SetMouseStatus            =   2,
+    VMMDevReq_SetPointerShape           =   3,
+    VMMDevReq_GetHostVersion            =   4,
+    VMMDevReq_Idle                      =   5,
+    VMMDevReq_GetHostTime               =  10,
+    VMMDevReq_GetHypervisorInfo         =  20,
+    VMMDevReq_SetHypervisorInfo         =  21,
+    VMMDevReq_RegisterPatchMemory       =  22,
+    VMMDevReq_DeregisterPatchMemory     =  23,
+    VMMDevReq_SetPowerStatus            =  30,
+    VMMDevReq_AcknowledgeEvents         =  41,
+    VMMDevReq_CtlGuestFilterMask        =  42,
+    VMMDevReq_ReportGuestInfo           =  50,
+    VMMDevReq_GetDisplayChangeRequest   =  51,
+    VMMDevReq_VideoModeSupported        =  52,
+    VMMDevReq_GetHeightReduction        =  53,
+    VMMDevReq_GetDisplayChangeRequest2  =  54,
+    VMMDevReq_ReportGuestCapabilities   =  55,
+    VMMDevReq_SetGuestCapabilities      =  56,
+    VMMDevReq_VideoModeSupported2       =  57,
+    VMMDevReq_ReportGuestInfo2          =  58,
+    VMMDevReq_ReportGuestStatus         =  59,
+    VMMDevReq_HGCMConnect               =  60,
+    VMMDevReq_HGCMDisconnect            =  61,
+    VMMDevReq_HGCMCall32                =  62,
+    VMMDevReq_HGCMCall64                =  63,
+    VMMDevReq_HGCMCancel                =  64,
+    VMMDevReq_HGCMCancel2               =  65,
+    VMMDevReq_VideoAccelEnable          =  70,
+    VMMDevReq_VideoAccelFlush           =  71,
+    VMMDevReq_VideoSetVisibleRegion     =  72,
+    VMMDevReq_GetSeamlessChangeRequest  =  73,
+    VMMDevReq_ReportGuestUserState      =  74,
+    VMMDevReq_QueryCredentials          = 100,
+    VMMDevReq_ReportCredentialsJudgement = 101,
+    VMMDevReq_ReportGuestStats          = 110,
+    VMMDevReq_GetMemBalloonChangeRequest = 111,
+    VMMDevReq_GetStatisticsChangeRequest = 112,
+    VMMDevReq_ChangeMemBalloon          = 113,
+    VMMDevReq_GetVRDPChangeRequest      = 150,
+    VMMDevReq_LogString                 = 200,
+    VMMDevReq_GetCpuHotPlugRequest      = 210,
+    VMMDevReq_SetCpuHotPlugStatus       = 211,
+    VMMDevReq_GetSessionId              = 217,
+    VMMDevReq_WriteCoreDump             = 218,
+    VMMDevReq_GuestHeartbeat            = 219,
+    VMMDevReq_HeartbeatConfigure        = 220,
+    VMMDevReq_SizeHack                  = 0x7fffffff
+} VMMDevRequestType;
+
+/** @name VMMDevRequestHeader::fRequestor values.
+ * Only used by the host when VBOXGSTINFO2_F_REQUESTOR_INFO was reported.
+ * @{ */
+#define VMMDEV_REQUESTOR_KERNEL                     (0x00000000U)
+#define VMMDEV_REQUESTOR_USERMODE                   (0x00000008U)
+#define VMMDEV_REQUESTOR_USR_DRV                    (0x00000001U)
+#define VMMDEV_REQUESTOR_USR_ROOT                   (0x00000003U)
+#define VMMDEV_REQUESTOR_CON_DONT_KNOW              (0x00000000U)
+/** @} */
+
+/** Generic VMMDev request header. */
+typedef struct VMMDevRequestHeader
+{
+    /** IN: Size of the structure in bytes (including body). */
+    UINT32 size;
+    /** IN: Version of the structure (VMMDEV_REQUEST_HEADER_VERSION). */
+    UINT32 version;
+    /** IN: Type of the request. */
+    VMMDevRequestType requestType;
+    /** OUT: VBox status code. */
+    INT32  rc;
+    /** Reserved field no.1. MBZ. */
+    UINT32 reserved1;
+    /** IN: Requestor information (VMMDEV_REQUESTOR_XXX). */
+    UINT32 fRequestor;
+} VMMDevRequestHeader;
+
+/** @name Mouse capability bits (VMMDevReqMouseStatus::mouseFeatures).
+ * @{ */
+#define VMMDEV_MOUSE_GUEST_CAN_ABSOLUTE                 (1U << 0)
+#define VMMDEV_MOUSE_HOST_WANTS_ABSOLUTE                (1U << 1)
+#define VMMDEV_MOUSE_GUEST_NEEDS_HOST_CURSOR            (1U << 2)
+#define VMMDEV_MOUSE_HOST_CANNOT_HWPOINTER              (1U << 3)
+#define VMMDEV_MOUSE_NEW_PROTOCOL                       (1U << 4)
+#define VMMDEV_MOUSE_HOST_RECHECKS_NEEDS_HOST_CURSOR    (1U << 5)
+#define VMMDEV_MOUSE_HOST_HAS_ABS_DEV                   (1U << 6)
+/** The mask of the bits the guest is allowed to change. */
+#define VMMDEV_MOUSE_GUEST_MASK                         (0x00000015U)
+/** @} */
+
+/** Absolute pointer range reported by the host (0..0xffff). */
+#define VMMDEV_MOUSE_RANGE_MIN                          0
+#define VMMDEV_MOUSE_RANGE_MAX                          0xffff
+
+/** VMMDevReq_GetMouseStatus / VMMDevReq_SetMouseStatus. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    UINT32 mouseFeatures;
+    INT32  pointerXPos;
+    INT32  pointerYPos;
+} VMMDevReqMouseStatus;
+
+/** @name Host feature flags (VMMDevReqHostVersion::features).
+ * @{ */
+#define VMMDEV_HVF_HGCM_PHYS_PAGE_LIST                  (1U << 0)
+/** @} */
+
+/** VMMDevReq_GetHostVersion. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    USHORT major;
+    USHORT minor;
+    UINT32 build;
+    UINT32 revision;
+    UINT32 features;
+} VMMDevReqHostVersion;
+
+/** VMMDevReq_GetHostTime. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    /** OUT: Milliseconds since the UNIX epoch. */
+    UINT64 time;
+} VMMDevReqHostTime;
+
+/** VMMDevReq_AcknowledgeEvents. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    /** OUT: Pending events. */
+    UINT32 events;
+} VMMDevEvents;
+
+/** VMMDevReq_CtlGuestFilterMask. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    UINT32 u32OrMask;
+    UINT32 u32NotMask;
+} VMMDevCtlGuestFilterMask;
+
+/** VMMDevReq_ReportGuestInfo. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    UINT32 interfaceVersion;
+    VBOXOSTYPE osType;
+} VMMDevReportGuestInfo;
+
+/** @name VMMDevReportGuestInfo2::additionsFeatures.
+ * @{ */
+#define VBOXGSTINFO2_F_REQUESTOR_INFO                   (0x00000001U)
+/** @} */
+
+/** VMMDevReq_ReportGuestInfo2. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    USHORT additionsMajor;
+    USHORT additionsMinor;
+    UINT32 additionsBuild;
+    UINT32 additionsRevision;
+    UINT32 additionsFeatures;
+    char   szName[128];
+} VMMDevReportGuestInfo2;
+
+/** @name Guest capability bits (VMMDevReqGuestCapabilities2).
+ * @{ */
+#define VMMDEV_GUEST_SUPPORTS_SEAMLESS                  (1U << 0)
+#define VMMDEV_GUEST_SUPPORTS_GUEST_HOST_WINDOW_MAPPING (1U << 1)
+#define VMMDEV_GUEST_SUPPORTS_GRAPHICS                  (1U << 2)
+#define VMMDEV_GUEST_CAPABILITIES_MASK                  (0x00000007U)
+/** @} */
+
+/** VMMDevReq_SetGuestCapabilities. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    UINT32 u32OrMask;
+    UINT32 u32NotMask;
+} VMMDevReqGuestCapabilities2;
+
+/** Guest facility types. */
+typedef enum
+{
+    VBoxGuestFacilityType_Unknown         = 0,
+    VBoxGuestFacilityType_VBoxGuestDriver = 20,
+    VBoxGuestFacilityType_AutoLogon       = 90,
+    VBoxGuestFacilityType_VBoxService     = 100,
+    VBoxGuestFacilityType_VBoxTrayClient  = 101,
+    VBoxGuestFacilityType_Seamless        = 1000,
+    VBoxGuestFacilityType_Graphics        = 1100,
+    VBoxGuestFacilityType_MonitorAttach   = 1101,
+    VBoxGuestFacilityType_All             = 0x7ffffffe,
+    VBoxGuestFacilityType_SizeHack        = 0x7fffffff
+} VBoxGuestFacilityType;
+
+/** Guest facility states. */
+typedef enum
+{
+    VBoxGuestFacilityStatus_Inactive    = 0,
+    VBoxGuestFacilityStatus_Paused      = 1,
+    VBoxGuestFacilityStatus_PreInit     = 20,
+    VBoxGuestFacilityStatus_Init        = 30,
+    VBoxGuestFacilityStatus_Active      = 50,
+    VBoxGuestFacilityStatus_Terminating = 100,
+    VBoxGuestFacilityStatus_Terminated  = 101,
+    VBoxGuestFacilityStatus_Failed      = 800,
+    VBoxGuestFacilityStatus_Unknown     = 999,
+    VBoxGuestFacilityStatus_SizeHack    = 0x7fffffff
+} VBoxGuestFacilityStatus;
+
+typedef struct
+{
+    VBoxGuestFacilityType facility;
+    VBoxGuestFacilityStatus status;
+    UINT32 flags;
+} VBoxGuestStatus;
+
+/** VMMDevReq_ReportGuestStatus. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    VBoxGuestStatus guestStatus;
+} VMMDevReportGuestStatus;
+
+/** Guest power states. */
+typedef enum
+{
+    VMMDevPowerState_Invalid   = 0,
+    VMMDevPowerState_Pause     = 1,
+    VMMDevPowerState_PowerOff  = 2,
+    VMMDevPowerState_SaveState = 3,
+    VMMDevPowerState_SizeHack  = 0x7fffffff
+} VMMDevPowerState;
+
+/** VMMDevReq_SetPowerStatus. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    VMMDevPowerState powerState;
+} VMMDevPowerStateRequest;
+
+/** VMMDevReq_HeartbeatConfigure. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    /** IN: Whether the guest heartbeat is enabled. */
+    BOOLEAN fEnabled;
+    UCHAR   abPadding[3];
+    /** OUT: Heartbeat interval in nanoseconds. */
+    UINT64  cNsInterval;
+} VMMDevReqHeartbeat;
+
+/** VMMDevReq_LogString. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    /** Variable length, zero terminated string. */
+    char szString[1];
+} VMMDevReqLogString;
+
+
+/*********************************************************************************************************************************
+*   HGCM                                                                                                                         *
+*********************************************************************************************************************************/
+
+/** @name VMMDevHGCMRequestHeader::fu32Flags.
+ * @{ */
+#define VBOX_HGCM_REQ_DONE                              (1U << 0)
+#define VBOX_HGCM_REQ_CANCELLED                         (1U << 1)
+/** @} */
+
+/** Header common to all HGCM requests. */
+typedef struct VMMDevHGCMRequestHeader
+{
+    VMMDevRequestHeader header;
+    /** OUT: HGCM flags (VBOX_HGCM_REQ_XXX), updated by the host asynchronously. */
+    UINT32 fu32Flags;
+    /** OUT: Result code of the HGCM operation. */
+    INT32  result;
+} VMMDevHGCMRequestHeader;
+
+typedef enum
+{
+    VMMDevHGCMLoc_Invalid            = 0,
+    VMMDevHGCMLoc_LocalHost          = 1,
+    VMMDevHGCMLoc_LocalHost_Existing = 2,
+    VMMDevHGCMLoc_SizeHack           = 0x7fffffff
+} HGCMServiceLocationType;
+
+typedef struct
+{
+    char achName[128];
+} HGCMServiceLocationHost;
+
+typedef struct HGCMServiceLocation
+{
+    HGCMServiceLocationType type;
+    union
+    {
+        HGCMServiceLocationHost host;
+    } u;
+} HGCMServiceLocation;
+
+/** VMMDevReq_HGCMConnect. */
+typedef struct
+{
+    VMMDevHGCMRequestHeader header;
+    HGCMServiceLocation loc;
+    /** OUT: Client identifier. */
+    UINT32 u32ClientID;
+} VMMDevHGCMConnect;
+
+/** VMMDevReq_HGCMDisconnect. */
+typedef struct
+{
+    VMMDevHGCMRequestHeader header;
+    UINT32 u32ClientID;
+} VMMDevHGCMDisconnect;
+
+typedef enum
+{
+    VMMDevHGCMParmType_Invalid            = 0,
+    VMMDevHGCMParmType_32bit              = 1,
+    VMMDevHGCMParmType_64bit              = 2,
+    VMMDevHGCMParmType_PhysAddr           = 3,
+    VMMDevHGCMParmType_LinAddr            = 4,
+    VMMDevHGCMParmType_LinAddr_In         = 5,
+    VMMDevHGCMParmType_LinAddr_Out        = 6,
+    VMMDevHGCMParmType_LinAddr_Locked     = 7,
+    VMMDevHGCMParmType_LinAddr_Locked_In  = 8,
+    VMMDevHGCMParmType_LinAddr_Locked_Out = 9,
+    VMMDevHGCMParmType_PageList           = 10,
+    VMMDevHGCMParmType_Embedded           = 11,
+    VMMDevHGCMParmType_ContiguousPageList = 12,
+    VMMDevHGCMParmType_SizeHack           = 0x7fffffff
+} HGCMFunctionParameterType;
+
+/** HGCM call parameter as seen by a 32-bit guest (12 bytes). */
+typedef struct
+{
+    HGCMFunctionParameterType type;
+    union
+    {
+        UINT32 value32;
+        UINT64 value64;
+        struct
+        {
+            UINT32 size;
+            union
+            {
+                UINT32 physAddr;
+                UINT32 linearAddr;
+            } u;
+        } Pointer;
+    } u;
+} HGCMFunctionParameter32;
+
+/** VMMDevReq_HGCMCall32, followed by cParms HGCMFunctionParameter32 entries. */
+typedef struct
+{
+    VMMDevHGCMRequestHeader header;
+    UINT32 u32ClientID;
+    UINT32 u32Function;
+    UINT32 cParms;
+} VMMDevHGCMCall;
+
+/** VMMDevReq_HGCMCancel2. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    /** Physical address of the request to cancel. */
+    UINT32 physReqToCancel;
+} VMMDevHGCMCancel2;
+
+/** Upper limit on the parameter count we accept for an HGCM call. */
+#define VMMDEV_MAX_HGCM_PARMS                           32
+
+
+/*********************************************************************************************************************************
+*   Guest property HGCM service (used by VBGTest)                                                                                *
+*********************************************************************************************************************************/
+
+#define GUEST_PROP_SERVICE_NAME                         "VBoxGuestPropSvc"
+#define GUEST_PROP_FN_GET_PROP                          1
+#define GUEST_PROP_FN_GET_PROP_CPARMS                   4
+
+#pragma pack(pop)
+
+#endif /* !VBOXGUEST98_VMMDEV_H */

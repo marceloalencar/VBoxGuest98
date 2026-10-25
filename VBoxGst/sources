@@ -5,9 +5,16 @@ DRIVERTYPE=WDM
 
 C_DEFINES=-DDRIVER
 
+INCLUDES=..\inc
+
 SOURCES= \
-        VBoxGst.c \
-        DebugPrint.c
+        Driver.c \
+        PnP.c \
+        Interrupt.c \
+        Common.c \
+        Hgcm.c \
+        Ioctl.c \
+        VbglR0.c
 
 LIB=$(DDKROOT)\lib
 INCLUDE=$(DDKROOT)\inc\ddk;$(MSVCDIR)\include

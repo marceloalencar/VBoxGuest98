@@ -1,0 +1,6 @@
+obj/
+objfre/
+objchk/
+build*.log
+build*.err
+build*.wrn

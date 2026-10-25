@@ -25,6 +25,8 @@ VBoxGst.sys
 [VBoxGuest_AddReg]
 HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,VBoxGst.sys
+; Set to 01,00,00,00 to have the VM powered off when Windows shuts down.
+HKR,,PowerOffOnShutdown,1,00,00,00,00
 
 [ControlFlags]
 

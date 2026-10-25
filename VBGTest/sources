@@ -3,6 +3,8 @@ TARGETPATH=obj
 TARGETTYPE=PROGRAM
 UMTYPE=console
 
+INCLUDES=..\inc
+
 SOURCES= \
         VBoxGuestTest.c
 

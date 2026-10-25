@@ -1,262 +1,326 @@
+/** @file
+ * VBoxGst - VirtualBox Guest Additions driver for Windows 98/ME, internal header.
+ *
+ * Layout (mirrors upstream src/VBox/Additions/common/VBoxGuest):
+ *  - Driver.c     DriverEntry, AddDevice, unload, create/close/cleanup.
+ *  - PnP.c        PnP and power IRPs, hardware resource setup/teardown.
+ *  - Interrupt.c  ISR and DPC.
+ *  - Common.c     OS independent core: host init, sessions, events, heartbeat.
+ *  - Hgcm.c       HGCM connect/disconnect/call.
+ *  - Ioctl.c      Device control and internal device control dispatch.
+ *  - VbglR0.c     VMMDev request allocation and submission.
+ */
+
+#ifndef VBOXGST_H
+#define VBOXGST_H
+
 #include <wdm.h>
-#include <initguid.h>
 
-#include "DebugPrint.h"
+#include "VBoxGuest98.h"
 
-#define VBOX_VERSION_MAJOR  (6)
-#define VBOX_VERSION_MINOR  (1)
-#define VBOX_VERSION_BUILD  (6)
-#define VBOX_SVN_REV        (137129)
-#define VBOX_VERSION_STRING "6.1.6"
 
-/** Win32 driver name */
-#define VBOXGUEST_DEVICE_NAME_NT   L"\\Device\\VBoxGuest"
-/** Device name. */
-#define VBOXGUEST_DEVICE_NAME_DOS  L"\\DosDevices\\VBoxGuest"
+/*********************************************************************************************************************************
+*   VBGL ring-0 request layer (VbglR0.c)                                                                                         *
+*********************************************************************************************************************************/
 
-// {719B4B48-C5DF-4474-A8E7-AF615CA3BC83}
-DEFINE_GUID(WDM_GUID, 
-			0x719b4b48, 0xc5df, 0x4474, 0xa8, 0xe7, 0xaf, 0x61, 0x5c, 0xa3, 0xbc, 0x83);
-
-typedef unsigned short UINT16;
-
-typedef enum VBOXOSTYPE
+/** Global VBGL ring-0 data. */
+typedef struct VBGLDATA
 {
-    VBOXOSTYPE_UNKNOWN    = 0,
-	VBOXOSTYPE_WIN98      = 0x22000,
-	VBOXOSTYPE_WINME      = 0x23000,
-	VBOXOSTYPE_32BIT_HACK = 0x7fffffff
-} VBOXOSTYPE;
+    /** I/O port to issue requests to. */
+    USHORT portVMMDev;
+    /** VMMDev adapter memory region if available. */
+    VMMDevMemory volatile *pVMMDevMemory;
+    /** DMA adapter used for allocating physically contiguous requests. */
+    PDMA_ADAPTER pDmaAdapter;
+    /** The host version data. */
+    VMMDevReqHostVersion hostVersion;
+} VBGLDATA;
 
-typedef struct VMMDevMemory
+extern VBGLDATA g_vbgldata;
+
+int     VbglR0InitPrimary(PDEVICE_OBJECT pPdo, USHORT portVMMDev, VMMDevMemory volatile *pVMMDevMemory, UINT32 *pfFeatures);
+void    VbglR0TerminatePrimary(void);
+int     VbglR0GRAlloc(VMMDevRequestHeader **ppReq, ULONG cbReq, VMMDevRequestType enmReqType);
+int     VbglR0GRPerform(VMMDevRequestHeader *pReq);
+void    VbglR0GRFree(VMMDevRequestHeader *pReq);
+UINT32  VbglR0GRPhysAddr(VMMDevRequestHeader *pReq);
+
+
+/*********************************************************************************************************************************
+*   Device extension and sessions                                                                                                *
+*********************************************************************************************************************************/
+
+/** Per bit usage counters, used to combine the masks of all sessions. */
+typedef struct VBOXGUESTBITUSAGETRACER
 {
-    UINT32 u32Size;
-    UINT32 u32Version;
-    union
-    {
-        struct
-        {
-            BOOLEAN fHaveEvents;
-        } V1_04;
-        struct
-        {
-            UINT32 u32HostEvents;
-            UINT32 u32GuestEventMask;
-        } V1_03;
-    } V;
-} VMMDevMemory;
+    /** Number of sessions using each bit. */
+    UINT32 acPerBitUsage[32];
+    /** Combined mask: bits with a non-zero usage count. */
+    UINT32 fMask;
+} VBOXGUESTBITUSAGETRACER;
 
-// VBox guest device (data) extension.
+struct VBOXGUESTSESSION;
+
+/** A thread waiting for events or for an HGCM request to complete. */
+typedef struct VBOXGUESTWAIT
+{
+    /** Entry in VBOXGUESTDEVEXT::WaitList. */
+    LIST_ENTRY ListEntry;
+    /** Signalled when the wait is satisfied or interrupted. */
+    KEVENT Event;
+    /** The session the waiter belongs to. */
+    struct VBOXGUESTSESSION *pSession;
+    /** Events the waiter is interested in (0 for HGCM waits). */
+    UINT32 fReqEvents;
+    /** Events delivered to the waiter. */
+    UINT32 fResEvents;
+    /** The HGCM request being waited on (NULL for event waits). */
+    VMMDevHGCMRequestHeader volatile *pHGCMReq;
+    /** Set when the wait was interrupted. */
+    BOOLEAN fInterrupted;
+} VBOXGUESTWAIT;
+typedef VBOXGUESTWAIT *PVBOXGUESTWAIT;
+
+/** A client session (one per file object, plus one for kernel clients). */
+typedef struct VBOXGUESTSESSION
+{
+    /** Entry in VBOXGUESTDEVEXT::SessionList. */
+    LIST_ENTRY ListEntry;
+    /** Whether this session belongs to a user mode handle. */
+    BOOLEAN fUserSession;
+    /** Events this session wants to receive. */
+    UINT32 fEventFilter;
+    /** Guest capabilities this session reports. */
+    UINT32 fCapabilities;
+    /** Mouse features this session requires. */
+    UINT32 fMouseStatus;
+    /** HGCM clients connected by this session (0 = free slot). */
+    UINT32 aHGCMClientIds[VBOXGUEST98_MAX_HGCM_CLIENTS];
+} VBOXGUESTSESSION;
+typedef VBOXGUESTSESSION *PVBOXGUESTSESSION;
+
+/** VBOXGUESTDEVEXT::uInitState values. */
+typedef enum VBOXGUESTDEVEXTINITSTATE
+{
+    VBOXGUESTDEVEXT_INIT_STATE_INVALID = 0,
+    VBOXGUESTDEVEXT_INIT_STATE_FUNDAMENT,
+    VBOXGUESTDEVEXT_INIT_STATE_RESOURCES,
+    VBOXGUESTDEVEXT_INIT_STATE_DELETED
+} VBOXGUESTDEVEXTINITSTATE;
+
+/** VBox guest device (data) extension, the OS independent part. */
 typedef struct VBOXGUESTDEVEXT
 {
-	/** The base of the adapter I/O ports. */
-    UINT16 IOPortBase;
-	/** Pointer to the mapping of the VMMDev adapter memory. */
-	VMMDevMemory volatile *pVMMDevMemory;
-	/** Host feature flags (VMMDEV_HVF_XXX).   */
-	UINT32 fHostFeatures;
+    /** VBOXGUESTDEVEXT_INIT_STATE_XXX. */
+    VBOXGUESTDEVEXTINITSTATE uInitState;
+    /** The guest OS type reported to the host. */
+    VBOXOSTYPE enmOsType;
+    /** The base of the adapter I/O ports. */
+    USHORT IOPortBase;
+    /** Pointer to the mapping of the VMMDev adapter memory. */
+    VMMDevMemory volatile *pVMMDevMemory;
+    /** Host feature flags (VMMDEV_HVF_XXX). */
+    UINT32 fHostFeatures;
+    /** Events that are always enabled, whatever the sessions want. */
+    UINT32 fFixedEvents;
+
+    /** Preallocated event acknowledge request, used by the ISR. */
+    VMMDevEvents *pIrqAckEvents;
+    /** Preallocated mouse status request, used by the DPC. */
+    VMMDevReqMouseStatus *pMouseStatusReq;
+    /** Preallocated power off request, used during shutdown. */
+    VMMDevPowerStateRequest *pPowerStateReq;
+    /** Events acknowledged by the ISR, not yet processed by the DPC.
+     *  Only accessed with the vgdrvAtomic helpers. */
+    UINT32 volatile fIsrEvents;
+
+    /** Spinlock protecting WaitList and fPendingEvents. */
+    KSPIN_LOCK EventSpinLock;
+    /** Threads waiting for events or HGCM completion (VBOXGUESTWAIT). */
+    LIST_ENTRY WaitList;
+    /** Events that no waiter has consumed yet. */
+    UINT32 fPendingEvents;
+
+    /** Mutex serializing session list and host mask updates (PASSIVE_LEVEL). */
+    KMUTEX SessionMutex;
+    /** All open sessions (VBOXGUESTSESSION). */
+    LIST_ENTRY SessionList;
+    /** Number of open user mode sessions. */
+    ULONG cUserSessions;
+    /** Session used by kernel mode clients through internal I/O controls. */
+    PVBOXGUESTSESSION pKernelSession;
+    /** Combined event filter of all sessions. */
+    VBOXGUESTBITUSAGETRACER EventFilterTracker;
+    /** Combined guest capabilities of all sessions. */
+    VBOXGUESTBITUSAGETRACER CapabilitiesTracker;
+    /** Combined mouse features of all sessions. */
+    VBOXGUESTBITUSAGETRACER MouseStatusTracker;
+
+    /** Spinlock protecting the mouse notification callback. Required since the
+     *  consumer is called from the DPC and not the ISR. */
+    KSPIN_LOCK MouseEventAccessSpinLock;
+    /** Mouse notification callback (VBoxMous). */
+    PFNVBOXGUEST98MOUSENOTIFY pfnMouseNotify;
+    /** User argument for pfnMouseNotify. */
+    PVOID pvMouseNotifyUser;
+
+    /** Preallocated heartbeat request, used by the heartbeat DPC. */
+    VMMDevRequestHeader *pHeartbeatReq;
+    /** Heartbeat timer. */
+    KTIMER HeartbeatTimer;
+    /** Heartbeat DPC. */
+    KDPC HeartbeatDpc;
+    /** Heartbeat interval in milliseconds, 0 if disabled. */
+    UINT32 cMsHeartbeatInterval;
 } VBOXGUESTDEVEXT;
 /** Pointer to the VBoxGuest driver data. */
 typedef VBOXGUESTDEVEXT *PVBOXGUESTDEVEXT;
 
-// Subclassing the device extension for adding windows-specific bits.
+/** PnP state of the device (VBOXGUESTDEVEXTWIN::enmDevState). */
+typedef enum VGDRVWINDEVSTATE
+{
+    VGDRVWINDEVSTATE_STOPPED = 0,
+    VGDRVWINDEVSTATE_STARTED,
+    VGDRVWINDEVSTATE_SURPRISE_REMOVED,
+    VGDRVWINDEVSTATE_REMOVED
+} VGDRVWINDEVSTATE;
+
+/** Subclassing the device extension for adding windows-specific bits. */
 typedef struct VBOXGUESTDEVEXTWIN
 {
-	/** The common device extension core. */
-	VBOXGUESTDEVEXT Core;
-	
-	/** Our functional driver object. */
-	PDEVICE_OBJECT pDeviceObject;
-	
-	/** Top of the stack. */
-	PDEVICE_OBJECT pNextLowerDriver;
-	
-	/** Interrupt object pointer. */
-	PKINTERRUPT pInterruptObject;
-	/** Device interrupt level. */
-	ULONG uInterruptLevel;
-	/** Device interrupt vector. */
-	ULONG uInterruptVector;
-	/** Affinity mask. */
-	KAFFINITY fInterruptAffinity;
-	/** LevelSensitive or Latched. */
-	KINTERRUPT_MODE enmInterruptMode;
-	
-	/** Physical address and length of VMMDev memory. */
+    /** The common device extension core. */
+    VBOXGUESTDEVEXT Core;
+
+    /** Our functional device object. */
+    PDEVICE_OBJECT pDeviceObject;
+    /** The physical device object (created by the PCI bus driver). */
+    PDEVICE_OBJECT pPhysicalDeviceObject;
+    /** Top of the stack. */
+    PDEVICE_OBJECT pNextLowerDriver;
+    /** PnP state. */
+    VGDRVWINDEVSTATE enmDevState;
+
+    /** Interrupt object pointer. */
+    PKINTERRUPT pInterruptObject;
+    /** Device interrupt level. */
+    ULONG uInterruptLevel;
+    /** Device interrupt vector. */
+    ULONG uInterruptVector;
+    /** Affinity mask. */
+    KAFFINITY fInterruptAffinity;
+    /** LevelSensitive or Latched. */
+    KINTERRUPT_MODE enmInterruptMode;
+
+    /** I/O port base and length. */
+    PHYSICAL_ADDRESS uIoPortPhysAddr;
+    ULONG cbIoPort;
+    /** Physical address of VMMDev memory. */
     PHYSICAL_ADDRESS uVmmDevMemoryPhysAddr;
-    /** Length of VMMDev memory.   */
+    /** Length of VMMDev memory. */
     ULONG cbVmmDevMemory;
-    
-    /** Spinlock protecting MouseNotifyCallback. Required since the consumer is
-     *  in a DPC callback and not the ISR. */
-	KSPIN_LOCK MouseEventAccessSpinLock;
-	
-	//OLD CODEBASE
-	PHYSICAL_ADDRESS uIoPortPhysAddr;
-	ULONG cbIoPort;
-	
-	PDMA_ADAPTER dmaAdapter;
-	ULONG dmaBufferSize;
-	PVOID dmaBufferVirt;
-	PHYSICAL_ADDRESS dmaBufferPhys;
-	UNICODE_STRING SymLinkName;
-	//OLD CODEBASE END
+    /** Kernel mapping of the VMMDev memory (MmMapIoSpace). */
+    PVOID pvMMIOBase;
+
+    /** Symbolic link name of the registered device interface. */
+    UNICODE_STRING InterfaceName;
+
+    /** Configuration (driver registry key): tell the host to power off the
+     *  VM when Windows shuts down ("PowerOffOnShutdown", default 0). */
+    BOOLEAN fPowerOffOnShutdown;
 } VBOXGUESTDEVEXTWIN;
 typedef VBOXGUESTDEVEXTWIN *PVBOXGUESTDEVEXTWIN;
 
-#define VERR_GENERAL_FAILURE (-1)
-#define VMMDEV_MEMORY_VERSION (1)
 
-#define VMMDEV_EVENT_MOUSE_POSITION_CHANGED (1 << 9)
+/*********************************************************************************************************************************
+*   Common core (Common.c)                                                                                                       *
+*********************************************************************************************************************************/
 
-typedef enum VMMDevRequestType
+int  VGDrvCommonInitDevExtFundament(PVBOXGUESTDEVEXT pDevExt, VBOXOSTYPE enmOsType);
+void VGDrvCommonDeleteDevExtFundament(PVBOXGUESTDEVEXT pDevExt);
+int  VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXT pDevExt, PDEVICE_OBJECT pPdo, USHORT IOPortBase,
+                                    void *pvMMIOBase, UINT32 cbMMIO, UINT32 fFixedEvents);
+void VGDrvCommonDeleteDevExtResources(PVBOXGUESTDEVEXT pDevExt);
+void VGDrvCommonProcessEvents(PVBOXGUESTDEVEXT pDevExt, UINT32 fEvents);
+void VGDrvCommonReportPowerOff(PVBOXGUESTDEVEXT pDevExt);
+
+int  VGDrvCommonCreateSession(PVBOXGUESTDEVEXT pDevExt, BOOLEAN fUserSession, PVBOXGUESTSESSION *ppSession);
+void VGDrvCommonCloseSession(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
+int  VGDrvCommonSetSessionEventFilter(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession,
+                                      UINT32 fOrMask, UINT32 fNotMask);
+int  VGDrvCommonSetSessionCapabilities(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession,
+                                       UINT32 fOrMask, UINT32 fNotMask);
+int  VGDrvCommonSetSessionMouseStatus(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, UINT32 fFeatures);
+int  VGDrvCommonSetMouseNotifyCallback(PVBOXGUESTDEVEXT pDevExt, PFNVBOXGUEST98MOUSENOTIFY pfnNotify, PVOID pvUser);
+
+int  VGDrvCommonWaitForEvents(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession,
+                              UINT32 fReqEvents, UINT32 cMsTimeout, UINT32 *pfEvents);
+int  VGDrvCommonWaitForHgcm(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession,
+                            VMMDevHGCMRequestHeader volatile *pHGCMReq, UINT32 cMsTimeout);
+void VGDrvCommonInterruptWaits(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
+
+
+/*********************************************************************************************************************************
+*   HGCM (Hgcm.c)                                                                                                                *
+*********************************************************************************************************************************/
+
+int  VGDrvHgcmConnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, const char *pszService, UINT32 *pidClient);
+int  VGDrvHgcmDisconnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, UINT32 idClient);
+int  VGDrvHgcmCall(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, VBOXGUEST98HGCMCALL *pCall, ULONG cbCall);
+void VGDrvHgcmDisconnectSessionClients(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
+
+
+/*********************************************************************************************************************************
+*   Windows specific (Driver.c, PnP.c, Interrupt.c, Ioctl.c)                                                                     *
+*********************************************************************************************************************************/
+
+NTSTATUS NTAPI  vgdrvWinPnP(PDEVICE_OBJECT pDevObj, PIRP pIrp);
+NTSTATUS NTAPI  vgdrvWinPower(PDEVICE_OBJECT pDevObj, PIRP pIrp);
+BOOLEAN  NTAPI  vgdrvWinIsrHandler(PKINTERRUPT pInterrupt, PVOID pvContext);
+VOID     NTAPI  vgdrvWinDpcHandler(PKDPC pDpc, PDEVICE_OBJECT pDevObj, PIRP pIrp, PVOID pvContext);
+NTSTATUS NTAPI  vgdrvWinIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp);
+NTSTATUS NTAPI  vgdrvWinInternalIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp);
+NTSTATUS        vgdrvWinCompleteRequest(PIRP pIrp, NTSTATUS rcNt, ULONG_PTR cbInfo);
+void            vgdrvWinDeleteDevice(PVBOXGUESTDEVEXTWIN pDevExt);
+
+
+/*********************************************************************************************************************************
+*   Helpers                                                                                                                      *
+*********************************************************************************************************************************/
+
+/** Converts a VBox status code to an NT status code. */
+NTSTATUS vgdrvRcToNtStatus(int rc);
+
+/** Full memory barrier (xchg is implicitly locked). */
+__forceinline void vgdrvMemoryBarrier(void)
 {
-	VMMDevReq_InvalidRequest       =  0,
-	VMMDevReq_SetMouseStatus       =  2,
-	VMMDevReq_GetHostVersion       =  4,
-	VMMDevReq_AcknowledgeEvents    = 41,
-	VMMDevReq_CtlGuestFilterMask   = 42,
-	VMMDevReq_ReportGuestInfo      = 50,
-	VMMDevReq_SetGuestCapabilities = 56,
-	VMMDevReq_ReportGuestInfo2     = 58,
-	VMMDevReq_ReportGuestStatus    = 59,
-	VMMDevReq_SizeHack             = 0x7fffffff
-} VMMDevRequestType;
+    LONG lDummy;
+    __asm xchg [lDummy], eax
+}
 
-#define VMMDEV_REQUEST_HEADER_VERSION (0x10001)
-
-#define VMMDEV_REQUESTOR_USR_DRV (0x00000001U)
-#define VMMDEV_REQUESTOR_KERNEL  (0x00000000U)
-
-typedef struct VMMDevRequestHeader
+/** Atomically ORs fBits into *pu32.  Safe at any IRQL including in the ISR.
+ *  (InterlockedOr is not available on Windows 98.) */
+__forceinline void vgdrvAtomicOrU32(UINT32 volatile *pu32, UINT32 fBits)
 {
-    UINT32 size;
-    UINT32 version;
-    VMMDevRequestType requestType;
-    INT32  rc;
-    UINT32 reserved1;
-    UINT32 fRequestor;
-} VMMDevRequestHeader;
+    __asm
+    {
+        mov     ecx, [pu32]
+        mov     eax, [fBits]
+        lock or [ecx], eax
+    }
+}
 
-typedef struct
+/** Atomically exchanges *pu32 with u32New, returning the old value. */
+__forceinline UINT32 vgdrvAtomicXchgU32(UINT32 volatile *pu32, UINT32 u32New)
 {
-	VMMDevRequestHeader header;
-	UINT32 mouseFeatures;
-	INT32 pointerXPos;
-	INT32 pointerYPos;
-} VMMDevReqMouseStatus;
+    UINT32 u32Old;
+    __asm
+    {
+        mov     ecx, [pu32]
+        mov     eax, [u32New]
+        xchg    [ecx], eax
+        mov     [u32Old], eax
+    }
+    return u32Old;
+}
 
-typedef struct
-{
-    VMMDevRequestHeader header;
-    short major;
-    short minor;
-    UINT32 build;
-    UINT32 revision;
-    UINT32 features;
-} VMMDevReqHostVersion;
-
-//Global VBGL ring-0 data.
-typedef struct VBGLDATA
-{
-	/** I/O port to issue requests to. */
-	UINT16 portVMMDev;
-	/** VMMDev adapter memory region if available. */
-	VMMDevMemory *pVMMDevMemory;
-	/** The host version data. */
-	VMMDevReqHostVersion hostVersion;
-} VBGLDATA;
-
-typedef struct
-{
-	VMMDevRequestHeader header;
-	UINT32 u32OrMask;
-	UINT32 u32NotMask;
-} VMMDevCtlGuestFilterMask;
-
-#define VMMDEV_VERSION (0x00010004)
-
-typedef struct
-{
-    VMMDevRequestHeader header;
-	UINT32 interfaceVersion;
-	VBOXOSTYPE osType;
-} VMMDevReportGuestInfo;
-
-typedef struct
-{
-	VMMDevRequestHeader header;
-	UINT32 u32OrMask;
-	UINT32 u32NotMask; 
-} VMMDevReqGuestCapabilities2;
-
-#define VBOXGSTINFO2_F_REQUESTOR_INFO (0x00000001U)
-
-typedef struct
-{
-    VMMDevRequestHeader header;
-    short additionsMajor;
-	short additionsMinor;
-	UINT32 additionsBuild;
-	UINT32 additionsRevision;
-	UINT32 additionsFeatures;
-	char szName[128];
-} VMMDevReportGuestInfo2;
-
-typedef enum
-{
-    VBoxGuestFacilityType_Unknown         = 0,
-    VBoxGuestFacilityType_VBoxGuestDriver = 20,
-	VBoxGuestFacilityType_All             = 0x7ffffffe,
-	VBoxGuestFacilityType_SizeHack        = 0x7fffffff
-} VBoxGuestFacilityType;
-
-typedef enum
-{
-	VBoxGuestFacilityStatus_Inactive    = 0,
-	VBoxGuestFacilityStatus_Active      = 50,
-	VBoxGuestFacilityStatus_Unknown     = 999,
-    VBoxGuestFacilityStatus_SizeHack    = 0x7fffffff
-} VBoxGuestFacilityStatus;
-
-typedef struct
-{
-	VBoxGuestFacilityType facility;
-	VBoxGuestFacilityStatus status;
-	UINT32 flags;
-} VBoxGuestStatus;
-
-typedef struct
-{
-	VMMDevRequestHeader header;
-	VBoxGuestStatus guestStatus;
-} VMMDevReportGuestStatus;
-
-NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath);
-static NTSTATUS NTAPI vgdrvWinAddDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pDevObj);
-static NTSTATUS       vgdrvWinInitDevExtFundament(PVBOXGUESTDEVEXTWIN pDevExt, PDEVICE_OBJECT pDevObj);
-       NTSTATUS       VGDrvCommonInitDevExtFundament(PVBOXGUESTDEVEXT pDevExt);
-static void           vgdrvWinDeleteDevExtFundament(PVBOXGUESTDEVEXTWIN pDevExt);
-       void           VGDrvCommonDeleteDevExtFundament(PVBOXGUESTDEVEXT pDevExt);
-static void     NTAPI vgdrvWinUnload(PDRIVER_OBJECT pDrvObj);
-static void           vgdrvWinDeleteDeviceResources(PVBOXGUESTDEVEXTWIN pDevExt);
-static void           vgdrvWinDeleteDeviceFundamentAndUnlink(PDEVICE_OBJECT pDevObj, PVBOXGUESTDEVEXTWIN pDevExt);
-static NTSTATUS NTAPI vgdrvWinCreate(PDEVICE_OBJECT pDevObj, PIRP pIrp);
-static NTSTATUS NTAPI vgdrvWinPnP(PDEVICE_OBJECT pDevObj, PIRP pIrp);
-static NTSTATUS NTAPI vgdrvWinPower(PDEVICE_OBJECT pDevObj, PIRP pIrp);
-static NTSTATUS       vgdrvWinPnPSendIrpSynchronously(PDEVICE_OBJECT pDevObj, PIRP pIrp, BOOLEAN fStrict);
-static NTSTATUS       vgdrvWinPnpIrpComplete(PDEVICE_OBJECT pDevObj, PIRP pIrp, PKEVENT pEvent);
-static NTSTATUS       vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PDEVICE_OBJECT pDevObj, PIRP pIrp);
-//       int            VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXT pDevExt, UINT16 IOPortBase,
-       int            VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt, UINT16 IOPortBase,
-                                                     void *pvMMIOBase, UINT32 cbMMIO,
-                                                     UINT32 fFixedEvents);
-       void           VGDrvCommonDeleteDevExtResources(PVBOXGUESTDEVEXTWIN pDevExt);
-static void     NTAPI vgdrvWinDpcHandler(PKDPC pDPC, PDEVICE_OBJECT pDevObj, PIRP pIrp, PVOID pContext);
-static NTSTATUS       vgdrvWinScanPCIResourceList(PVBOXGUESTDEVEXTWIN pDevExt, PCM_RESOURCE_LIST pResList);
-static NTSTATUS       vgdrvWinMapVMMDevMemory(PVBOXGUESTDEVEXTWIN pDevExt, PHYSICAL_ADDRESS PhysAddr,
-											  ULONG cbToMap, void **ppvMMIOBase, UINT32 *pcbMMIO);
-static void           vgdrvWinUnmapVMMDevMemory(PVBOXGUESTDEVEXTWIN pDevExt);
-//       int            VbglR0InitPrimary(UINT16 portVMMDev, VMMDevMemory *pVMMDevMemory, UINT32 *pfFeatures);
-//static void           vbglR0QueryHostVersion(void);
-//       int            VbglR0GRAlloc(VMMDevRequestHeader **ppReq, size_t cbReq, VMMDevRequestType enmReqType);
+#endif /* !VBOXGST_H */
