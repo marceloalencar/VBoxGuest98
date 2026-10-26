@@ -37,7 +37,7 @@
 *********************************************************************************************************************************/
 
 /** Version of this interface, high word is major (incompatible changes). */
-#define VBOXGUEST98_IOCTL_VERSION       (0x00010002U)
+#define VBOXGUEST98_IOCTL_VERSION       (0x00010003U)
 
 /** Native device name. */
 #define VBOXGUEST98_DEVICE_NAME_NT      L"\\Device\\VBoxGuest"
@@ -54,8 +54,11 @@ DEFINE_GUID(GUID_DEVINTERFACE_VBOXGUEST98,
 
 /** Largest raw VMMDev request accepted by IOCTL_VBOXGUEST98_VMMDEV_REQUEST. */
 #define VBOXGUEST98_MAX_VMMDEV_REQUEST_SIZE (16384U)
-/** Largest data area accepted by IOCTL_VBOXGUEST98_HGCM_CALL. */
-#define VBOXGUEST98_MAX_HGCM_DATA_SIZE  (262144U)
+/** Largest data area accepted by IOCTL_VBOXGUEST98_HGCM_CALL (256 KB before
+ *  interface 1.3); room for a 2560x1440 32 bpp clipboard image.  The driver
+ *  bounces the buffers through nonpaged memory, so big calls may fail with
+ *  VERR_NO_MEMORY on guests with little RAM. */
+#define VBOXGUEST98_MAX_HGCM_DATA_SIZE  (16U * 1024 * 1024)
 /** Number of HGCM clients a single session may have connected at once. */
 #define VBOXGUEST98_MAX_HGCM_CLIENTS    (32)
 /** Largest text accepted by IOCTL_VBOXGUEST98_WRITE_LOG. */

@@ -1,5 +1,5 @@
 /** @file
- * VBoxTray - Shared clipboard (text only), legacy HGCM protocol.
+ * VBoxTray - Shared clipboard (text, images, HTML), legacy HGCM protocol.
  *
  * Two threads share one HGCM client (and therefore one overlapped handle):
  *  - The worker thread (VBoxClipboardThread) blocks in
@@ -7,19 +7,25 @@
  *  - The VBoxTray window thread is in the clipboard viewer chain and reports
  *    guest clipboard changes to the host (VBoxClipboardWndProc).
  * The guest clipboard itself is only touched by the window thread; the
- * worker asks it with SendMessage.
+ * worker asks it with messages.
  *
- * Host data is fetched as soon as the host reports new text (no delayed
- * rendering), so the window thread never has to wait for the host while
- * another application holds the clipboard open.
+ * Host content uses delayed rendering, like upstream: the formats the host
+ * reports are announced on the guest clipboard without data, and the data
+ * is fetched from the host when an application pastes (WM_RENDERFORMAT, on
+ * the window thread, while the application waits).
  *
  * Windows 98 applications use CF_TEXT (ANSI); the host speaks UTF-16, so the
  * text is converted with the active code page.  CF_UNICODETEXT is also
  * offered for the few Unicode aware applications.
+ *
+ * Images travel as packed DIBs (BITMAPINFOHEADER, colors, bits) both ways,
+ * the guest side being CF_DIB; Windows converts to and from CF_BITMAP for
+ * the applications that use that.
  */
 
 #include "VBoxTray.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,27 +36,36 @@
 
 /** Worker -> window: the HGCM client is connected, report the guest formats. */
 #define WM_VBOXCLIP_CONNECTED       (WM_APP + 10)
-/** Worker -> window: put text on the guest clipboard.
- *  wParam: size in bytes, lParam: UTF-16 text (NULL empties the clipboard). */
-#define WM_VBOXCLIP_SET             (WM_APP + 11)
-/** Worker -> window: get the guest clipboard text.  lParam: VBOXCLIPDATA to fill. */
+/** Worker -> window: announce host formats on the guest clipboard.
+ *  wParam: the formats (VBOX_SHCL_FMT_XXX). */
+#define WM_VBOXCLIP_ANNOUNCE        (WM_APP + 11)
+/** Worker -> window: get guest clipboard data.  wParam: the format
+ *  (one VBOX_SHCL_FMT_XXX bit), lParam: VBOXCLIPDATA to fill. */
 #define WM_VBOXCLIP_GET             (WM_APP + 12)
 
 /** First guess for the size of the host data. */
 #define VBOXCLIP_READ_SIZE          16384
 /** Timeout for the calls that don't wait for host messages (ms). */
 #define VBOXCLIP_CALL_TIMEOUT_MS    10000
+/** Name of the Windows HTML clipboard format. */
+#define VBOXCLIP_CF_HTML_NAME       "HTML Format"
+/** Attempts and pause between them when another application has the
+ *  clipboard open. */
+#define VBOXCLIP_OPEN_TRIES         10
+#define VBOXCLIP_OPEN_WAIT_MS       20
 
 
 /*********************************************************************************************************************************
 *   Structures and Typedefs                                                                                                      *
 *********************************************************************************************************************************/
 
-/** Text passed between the threads; pwsz is malloc'ed by the producer. */
+/** Guest data for the host (WM_VBOXCLIP_GET), in the host's layout (UTF-16
+ *  text with its terminator, a packed DIB, or a UTF-8 HTML fragment with its
+ *  terminator); pv is malloc'ed by the window thread. */
 typedef struct VBOXCLIPDATA
 {
-    WCHAR *pwsz;
-    /** Size in bytes, including the terminator. */
+    void *pv;
+    /** Size in bytes. */
     DWORD cb;
 } VBOXCLIPDATA;
 
@@ -67,6 +82,8 @@ static HANDLE g_hClipDevice = INVALID_HANDLE_VALUE;
 static UINT32 g_idClipClient = 0;
 /** Next window in the clipboard viewer chain (window thread only). */
 static HWND g_hwndNextViewer = NULL;
+/** The "HTML Format" (CF_HTML) clipboard format. */
+static UINT g_cfHtml = 0;
 
 
 /*********************************************************************************************************************************
@@ -196,10 +213,12 @@ static int vboxClipReadData(HANDLE hDevice, UINT32 idClient, UINT32 fFormat, voi
         if (RT_FAILURE(rc))
             return rc;
 
-        /* Too small: retry once with the size the host asked for. */
-        if (cbActual > VBOXGUEST98_MAX_HGCM_DATA_SIZE)
+        /* Too small: retry once with the size the host asked for, plus one, since
+           the host also reports VINF_BUFFER_OVERFLOW for a buffer of exactly the
+           data's size (its check is cbActual >= cbData). */
+        if (cbActual >= VBOXGUEST98_MAX_HGCM_DATA_SIZE)
             return VERR_TOO_MUCH_DATA;
-        cbBuf = cbActual;
+        cbBuf = cbActual + 1;
         rc = VERR_BUFFER_OVERFLOW;
     }
     return rc;
@@ -245,11 +264,83 @@ static int vboxClipWriteData(HANDLE hDevice, UINT32 idClient, UINT32 fFormat, co
  */
 static UINT32 vboxClipGuestFormats(void)
 {
+    UINT32 fFormats = VBOX_SHCL_FMT_NONE;
+
     if (   IsClipboardFormatAvailable(CF_TEXT)
         || IsClipboardFormatAvailable(CF_OEMTEXT)
         || IsClipboardFormatAvailable(CF_UNICODETEXT))
-        return VBOX_SHCL_FMT_UNICODETEXT;
-    return VBOX_SHCL_FMT_NONE;
+        fFormats |= VBOX_SHCL_FMT_UNICODETEXT;
+    if (IsClipboardFormatAvailable(CF_DIB) || IsClipboardFormatAvailable(CF_BITMAP))
+        fFormats |= VBOX_SHCL_FMT_BITMAP;
+    if (g_cfHtml && IsClipboardFormatAvailable(g_cfHtml))
+        fFormats |= VBOX_SHCL_FMT_HTML;
+    return fFormats;
+}
+
+/**
+ * Returns the value of a CF_HTML header field ("StartFragment:" etc.), -1
+ * if it is missing.
+ */
+static long vboxClipCfHtmlValue(const char *pszCfHtml, const char *pszField)
+{
+    const char *psz = strstr(pszCfHtml, pszField);
+    if (!psz)
+        return -1;
+    psz += strlen(pszField);
+    if (*psz < '0' || *psz > '9')
+        return -1;
+    return strtol(psz, NULL, 10);
+}
+
+/**
+ * Checks whether text is CF_HTML (has the header) rather than plain HTML
+ * (ShClWinIsCFHTML).
+ */
+static BOOL vboxClipIsCfHtml(const char *psz)
+{
+    return strstr(psz, "Version:") && strstr(psz, "StartHTML:");
+}
+
+/**
+ * Returns the size of a packed DIB, from its header.
+ *
+ * @returns Size in bytes, 0 if the header makes no sense.
+ * @param   pHdr    The DIB.
+ * @param   cbMax   The size of the memory it is in.
+ */
+static DWORD vboxClipDibSize(const BITMAPINFOHEADER *pHdr, DWORD cbMax)
+{
+    UINT64 cbHdr;
+    UINT64 cbBits;
+    DWORD cColors;
+
+    if (   cbMax < sizeof(BITMAPINFOHEADER)
+        || pHdr->biSize < sizeof(BITMAPINFOHEADER) /* Not the OS/2 BITMAPCOREHEADER. */
+        || pHdr->biSize > cbMax
+        || pHdr->biWidth <= 0
+        || pHdr->biHeight == 0
+        || pHdr->biPlanes != 1
+        || pHdr->biBitCount == 0
+        || pHdr->biBitCount > 32)
+        return 0;
+
+    cbHdr = pHdr->biSize;
+    if (pHdr->biSize == sizeof(BITMAPINFOHEADER) && pHdr->biCompression == BI_BITFIELDS)
+        cbHdr += 3 * sizeof(DWORD); /* The color masks follow the header. */
+    cColors = pHdr->biClrUsed;
+    if (!cColors && pHdr->biBitCount <= 8)
+        cColors = 1U << pHdr->biBitCount;
+    cbHdr += (UINT64)cColors * sizeof(RGBQUAD);
+
+    if (pHdr->biCompression == BI_RGB || pHdr->biCompression == BI_BITFIELDS)
+        cbBits = (((UINT64)pHdr->biWidth * pHdr->biBitCount + 31) / 32) * 4
+               * (UINT64)(pHdr->biHeight < 0 ? -pHdr->biHeight : pHdr->biHeight);
+    else
+        cbBits = pHdr->biSizeImage; /* RLE. */
+
+    if (cbHdr + cbBits > cbMax)
+        return 0;
+    return (DWORD)(cbHdr + cbBits);
 }
 
 /**
@@ -268,19 +359,14 @@ static void vboxClipReportGuestFormats(HWND hwnd)
 }
 
 /**
- * Gets the guest clipboard text as UTF-16.
+ * Gets the guest clipboard text as UTF-16.  The clipboard is open.
  *
- * @param   hwnd    Our window.
- * @param   pData   Where to return the text, pwsz is NULL if there is none.
+ * @param   pData   Where to return the text (pv stays NULL if there is none).
  */
-static void vboxClipGetGuestText(HWND hwnd, VBOXCLIPDATA *pData)
+static void vboxClipGetGuestText(VBOXCLIPDATA *pData)
 {
+    WCHAR *pwszRet;
     HANDLE hMem;
-
-    pData->pwsz = NULL;
-    pData->cb   = 0;
-    if (!OpenClipboard(hwnd))
-        return;
 
     hMem = GetClipboardData(CF_TEXT);
     if (hMem)
@@ -295,11 +381,12 @@ static void vboxClipGetGuestText(HWND hwnd, VBOXCLIPDATA *pData)
             while ((DWORD)cch < cbMax && psz[cch])
                 cch++;
             cwc = MultiByteToWideChar(CP_ACP, 0, psz, cch, NULL, 0);
-            pData->pwsz = (WCHAR *)malloc((cwc + 1) * sizeof(WCHAR));
-            if (pData->pwsz)
+            pwszRet = (WCHAR *)malloc((cwc + 1) * sizeof(WCHAR));
+            if (pwszRet)
             {
-                MultiByteToWideChar(CP_ACP, 0, psz, cch, pData->pwsz, cwc);
-                pData->pwsz[cwc] = 0;
+                MultiByteToWideChar(CP_ACP, 0, psz, cch, pwszRet, cwc);
+                pwszRet[cwc] = 0;
+                pData->pv = pwszRet;
                 pData->cb = (cwc + 1) * sizeof(WCHAR);
             }
             GlobalUnlock(hMem);
@@ -317,18 +404,118 @@ static void vboxClipGetGuestText(HWND hwnd, VBOXCLIPDATA *pData)
                 DWORD cwc = 0;
                 while (cwc < cwcMax && pwsz[cwc])
                     cwc++;
-                pData->pwsz = (WCHAR *)malloc((cwc + 1) * sizeof(WCHAR));
-                if (pData->pwsz)
+                pwszRet = (WCHAR *)malloc((cwc + 1) * sizeof(WCHAR));
+                if (pwszRet)
                 {
-                    memcpy(pData->pwsz, pwsz, cwc * sizeof(WCHAR));
-                    pData->pwsz[cwc] = 0;
+                    memcpy(pwszRet, pwsz, cwc * sizeof(WCHAR));
+                    pwszRet[cwc] = 0;
+                    pData->pv = pwszRet;
                     pData->cb = (cwc + 1) * sizeof(WCHAR);
                 }
                 GlobalUnlock(hMem);
             }
         }
     }
+}
 
+/**
+ * Gets the guest clipboard image as a packed DIB.  The clipboard is open;
+ * Windows makes CF_DIB from CF_BITMAP when needed.
+ *
+ * @param   pData   Where to return the DIB (pv stays NULL if there is none).
+ */
+static void vboxClipGetGuestDib(VBOXCLIPDATA *pData)
+{
+    HANDLE hMem = GetClipboardData(CF_DIB);
+    const BITMAPINFOHEADER *pHdr;
+
+    if (!hMem)
+        return;
+    pHdr = (const BITMAPINFOHEADER *)GlobalLock(hMem);
+    if (pHdr)
+    {
+        DWORD cb = vboxClipDibSize(pHdr, GlobalSize(hMem));
+        if (cb > VBOXGUEST98_MAX_HGCM_DATA_SIZE)
+            VBoxTrayLogRel("Clipboard: guest image too big (%lu KB)\n", cb / 1024);
+        else if (cb)
+        {
+            pData->pv = malloc(cb);
+            if (pData->pv)
+            {
+                memcpy(pData->pv, pHdr, cb);
+                pData->cb = cb;
+            }
+        }
+        GlobalUnlock(hMem);
+    }
+}
+
+/**
+ * Gets the guest clipboard HTML as a UTF-8 fragment, the way the host wants
+ * it (ShClWinConvertCFHTMLToMIME).  The clipboard is open.
+ *
+ * @param   pData   Where to return the fragment (pv stays NULL if there is none).
+ */
+static void vboxClipGetGuestHtml(VBOXCLIPDATA *pData)
+{
+    HANDLE hMem = GetClipboardData(g_cfHtml);
+    const char *pch;
+    char *pszCfHtml;
+    DWORD cch = 0;
+    DWORD cbMax;
+    long offStart;
+    long offEnd;
+
+    if (!hMem)
+        return;
+    pch = (const char *)GlobalLock(hMem);
+    if (!pch)
+        return;
+    cbMax = GlobalSize(hMem);
+    while (cch < cbMax && pch[cch])
+        cch++;
+    pszCfHtml = (char *)malloc(cch + 1);
+    if (pszCfHtml)
+    {
+        memcpy(pszCfHtml, pch, cch);
+        pszCfHtml[cch] = '\0';
+    }
+    GlobalUnlock(hMem);
+    if (!pszCfHtml)
+        return;
+
+    /* The fragment between the offsets; without a usable header, all of it. */
+    offStart = vboxClipCfHtmlValue(pszCfHtml, "StartFragment:");
+    offEnd   = vboxClipCfHtmlValue(pszCfHtml, "EndFragment:");
+    if (offStart > 0 && offEnd >= offStart && (DWORD)offEnd <= cch)
+    {
+        memmove(pszCfHtml, &pszCfHtml[offStart], offEnd - offStart);
+        pszCfHtml[offEnd - offStart] = '\0';
+        cch = offEnd - offStart;
+    }
+    pData->pv = pszCfHtml;
+    pData->cb = cch + 1;
+}
+
+/**
+ * Gets guest clipboard data in a host format.
+ *
+ * @param   hwnd        Our window.
+ * @param   fFormat     One VBOX_SHCL_FMT_XXX bit.
+ * @param   pData       Where to return the data, pv is NULL if there is none.
+ */
+static void vboxClipGetGuest(HWND hwnd, UINT32 fFormat, VBOXCLIPDATA *pData)
+{
+    pData->pv = NULL;
+    pData->cb = 0;
+    if (!OpenClipboard(hwnd))
+        return;
+    if (fFormat == VBOX_SHCL_FMT_UNICODETEXT)
+        vboxClipGetGuestText(pData);
+    else if (fFormat == VBOX_SHCL_FMT_BITMAP)
+        vboxClipGetGuestDib(pData);
+    else if (fFormat == VBOX_SHCL_FMT_HTML && g_cfHtml)
+        vboxClipGetGuestHtml(pData);
     CloseClipboard();
 }
 
@@ -392,64 +579,227 @@ static WCHAR *vboxClipToCrLf(const WCHAR *pwszSrc, int cwcSrc, int *pcwcDst)
 }
 
 /**
- * Puts host text on the guest clipboard, or empties it.
+ * Renders host text as CF_TEXT (ANSI, active code page) or CF_UNICODETEXT,
+ * with CRLF line ends.  The clipboard is open (WM_RENDERFORMAT).
  *
- * @param   hwnd    Our window, becomes the clipboard owner.
- * @param   pwszIn  UTF-16 text, NULL to empty the clipboard.
- * @param   cb      Size of the text in bytes.
+ * @param   cf      CF_TEXT or CF_UNICODETEXT.
+ * @param   pwszIn  The host's UTF-16 text.
+ * @param   cb      Its size in bytes.
  */
-static void vboxClipSetGuestText(HWND hwnd, const WCHAR *pwszIn, DWORD cb)
+static void vboxClipRenderText(UINT cf, const WCHAR *pwszIn, DWORD cb)
 {
-    WCHAR *pwszCrLf = NULL;
-    const WCHAR *pwsz = pwszIn;
-    HGLOBAL hMem;
+    WCHAR *pwszCrLf;
+    HGLOBAL hMem = NULL;
     char *pszAnsi;
     int cwc = 0;
     int cch;
 
-    if (!OpenClipboard(hwnd))
+    while ((DWORD)cwc < cb / sizeof(WCHAR) && pwszIn[cwc])
+        cwc++;
+    pwszCrLf = vboxClipToCrLf(pwszIn, cwc, &cwc);
+    if (!pwszCrLf)
         return;
-    EmptyClipboard();
 
-    if (pwsz)
+    if (cf == CF_TEXT)
     {
-        while ((DWORD)cwc < cb / sizeof(WCHAR) && pwsz[cwc])
-            cwc++;
-        pwszCrLf = vboxClipToCrLf(pwszIn, cwc, &cwc);
-        if (pwszCrLf)
-            pwsz = pwszCrLf;
-        else
-            cwc = 0; /* Out of memory; leave the clipboard empty rather than half converted. */
-
-        cch = WideCharToMultiByte(CP_ACP, 0, pwsz, cwc, NULL, 0, NULL, NULL);
+        cch = WideCharToMultiByte(CP_ACP, 0, pwszCrLf, cwc, NULL, 0, NULL, NULL);
         pszAnsi = (char *)malloc(cch + 1);
         if (pszAnsi)
         {
-            WideCharToMultiByte(CP_ACP, 0, pwsz, cwc, pszAnsi, cch, NULL, NULL);
+            WideCharToMultiByte(CP_ACP, 0, pwszCrLf, cwc, pszAnsi, cch, NULL, NULL);
             pszAnsi[cch] = '\0';
             hMem = vboxClipAllocGlobal(pszAnsi, cch + 1);
-            if (hMem && !SetClipboardData(CF_TEXT, hMem))
-                GlobalFree(hMem);
             free(pszAnsi);
         }
+    }
+    else
+        hMem = vboxClipAllocGlobal(pwszCrLf, (cwc + 1) * sizeof(WCHAR));
+    if (hMem && !SetClipboardData(cf, hMem))
+        GlobalFree(hMem);
+    free(pwszCrLf);
+}
 
-        hMem = GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, (cwc + 1) * sizeof(WCHAR));
-        if (hMem)
-        {
-            WCHAR *pwszDst = (WCHAR *)GlobalLock(hMem);
-            if (pwszDst)
-            {
-                memcpy(pwszDst, pwsz, cwc * sizeof(WCHAR));
-                pwszDst[cwc] = 0;
-                GlobalUnlock(hMem);
-            }
-            if (!pwszDst || !SetClipboardData(CF_UNICODETEXT, hMem))
-                GlobalFree(hMem);
-        }
-        free(pwszCrLf);
+/**
+ * Renders a host image (packed DIB) as CF_DIB.  The clipboard is open.
+ */
+static void vboxClipRenderDib(const void *pv, DWORD cb)
+{
+    const BITMAPINFOHEADER *pHdr = (const BITMAPINFOHEADER *)pv;
+    DWORD cbDib = vboxClipDibSize(pHdr, cb);
+    HGLOBAL hMem;
+
+    if (!cbDib)
+    {
+        VBoxTrayLogRel("Clipboard: unusable host image (%lu bytes)\n", cb);
+        return;
+    }
+    hMem = vboxClipAllocGlobal(pv, cbDib);
+    if (hMem && !SetClipboardData(CF_DIB, hMem))
+        GlobalFree(hMem);
+    VBoxTrayLogRel("Clipboard: host image %ldx%ld, %u bpp, %lu KB\n", pHdr->biWidth,
+                   pHdr->biHeight < 0 ? -pHdr->biHeight : pHdr->biHeight, pHdr->biBitCount, cbDib / 1024);
+}
+
+/**
+ * Renders host HTML as CF_HTML.  The clipboard is open.  The host sends a
+ * UTF-8 fragment, wrapped here in the CF_HTML header like upstream's
+ * ShClWinConvertMIMEToCFHTML (offsets zero padded, so they are constant).
+ */
+static void vboxClipRenderHtml(const char *pch, DWORD cb)
+{
+    static const char s_szFormat[] =
+        /*   0 */ "Version:1.0\r\n"
+        /*  13 */ "StartHTML:000000101\r\n"
+        /*  34 */ "EndHTML:%09lu\r\n"
+        /*  53 */ "StartFragment:000000137\r\n"
+        /*  78 */ "EndFragment:%09lu\r\n"
+        /* 101 */ "<html>\r\n"
+        /* 109 */ "<body>\r\n"
+        /* 117 */ "<!--StartFragment-->"
+        /* 137 */ "%s"
+        /* 137 */ "<!--EndFragment-->\r\n"
+        /* 157 */ "</body>\r\n"
+        /* 166 */ "</html>\r\n";
+    /* Length without the fragment (175): less the "%s", plus 4 for each "%09lu" printing 9 digits. */
+    DWORD const cchHeader = sizeof(s_szFormat) - 1 - 2 + 2 * 4;
+    char *pszFragment;
+    char *pszCfHtml;
+    HGLOBAL hMem;
+    DWORD cch = 0;
+
+    while (cch < cb && pch[cch])
+        cch++;
+    pszFragment = (char *)malloc(cch + 1);
+    if (!pszFragment)
+        return;
+    memcpy(pszFragment, pch, cch);
+    pszFragment[cch] = '\0';
+
+    if (vboxClipIsCfHtml(pszFragment))
+        pszCfHtml = pszFragment; /* Already CF_HTML (older hosts pass it through). */
+    else
+    {
+        pszCfHtml = (char *)malloc(cchHeader + cch + 1);
+        if (pszCfHtml)
+            sprintf(pszCfHtml, s_szFormat, (unsigned long)(cchHeader + cch), (unsigned long)(cchHeader + cch - 38),
+                    pszFragment);
+        free(pszFragment);
+        if (!pszCfHtml)
+            return;
     }
 
+    hMem = vboxClipAllocGlobal(pszCfHtml, lstrlen(pszCfHtml) + 1);
+    if (hMem && !SetClipboardData(g_cfHtml, hMem))
+        GlobalFree(hMem);
+    free(pszCfHtml);
+}
+
+/**
+ * WM_RENDERFORMAT: an application wants host data we announced.  Fetches it
+ * from the host now (the application waits) and puts it on the clipboard,
+ * which the application has open.
+ *
+ * @param   cf      The clipboard format asked for.
+ */
+static void vboxClipRenderFormat(UINT cf)
+{
+    UINT32 fFormat;
+    UINT32 idClient;
+    HANDLE hDevice;
+    void *pv;
+    UINT32 cb;
+    int rc;
+
+    if (cf == CF_TEXT || cf == CF_UNICODETEXT)
+        fFormat = VBOX_SHCL_FMT_UNICODETEXT;
+    else if (cf == CF_DIB)
+        fFormat = VBOX_SHCL_FMT_BITMAP;
+    else if (cf == g_cfHtml && g_cfHtml)
+        fFormat = VBOX_SHCL_FMT_HTML;
+    else
+        return;
+
+    EnterCriticalSection(&g_ClipCritSect);
+    hDevice  = g_hClipDevice;
+    idClient = g_idClipClient;
+    LeaveCriticalSection(&g_ClipCritSect);
+    if (!idClient)
+        return;
+
+    rc = vboxClipReadData(hDevice, idClient, fFormat, &pv, &cb);
+    if (RT_FAILURE(rc))
+    {
+        VBoxTrayLogRel("Clipboard: reading host data (format %#lx) failed, rc=%d\n", fFormat, rc);
+        return;
+    }
+    if (fFormat == VBOX_SHCL_FMT_UNICODETEXT)
+        vboxClipRenderText(cf, (const WCHAR *)pv, cb);
+    else if (fFormat == VBOX_SHCL_FMT_BITMAP)
+        vboxClipRenderDib(pv, cb);
+    else
+        vboxClipRenderHtml((const char *)pv, cb);
+    free(pv);
+}
+
+/**
+ * Opens the clipboard, retrying a little as another application may have
+ * it open for a moment (like upstream's ShClWinOpen).
+ */
+static BOOL vboxClipOpen(HWND hwnd)
+{
+    unsigned i;
+    for (i = 0; i < VBOXCLIP_OPEN_TRIES; i++)
+    {
+        if (OpenClipboard(hwnd))
+            return TRUE;
+        Sleep(VBOXCLIP_OPEN_WAIT_MS);
+    }
+    return FALSE;
+}
+
+/**
+ * The host reported new clipboard content: replace the guest clipboard
+ * content with announcements of the formats we can render
+ * (ShClWinClearAndAnnounceFormats).  The data is fetched only when an
+ * application asks for it (WM_RENDERFORMAT).
+ *
+ * @param   hwnd        Our window, becomes the clipboard owner.
+ * @param   fFormats    The host formats (VBOX_SHCL_FMT_XXX).
+ */
+static void vboxClipAnnounce(HWND hwnd, UINT32 fFormats)
+{
+    if (!vboxClipOpen(hwnd))
+    {
+        VBoxTrayLogRel("Clipboard: cannot open the clipboard for the host formats %#lx\n", fFormats);
+        return;
+    }
+    EmptyClipboard();
+    if (fFormats & VBOX_SHCL_FMT_UNICODETEXT)
+    {
+        /* Windows 98 does not make one from the other, so offer both. */
+        SetClipboardData(CF_TEXT, NULL);
+        SetClipboardData(CF_UNICODETEXT, NULL);
+    }
+    if (fFormats & VBOX_SHCL_FMT_BITMAP)
+        SetClipboardData(CF_DIB, NULL);
+    if ((fFormats & VBOX_SHCL_FMT_HTML) && g_cfHtml)
+        SetClipboardData(g_cfHtml, NULL);
     CloseClipboard();
+}
+
+/**
+ * WM_RENDERALLFORMATS: VBoxTray is going away and its announcements with
+ * it.  Like upstream, the clipboard is emptied rather than fetching
+ * everything from the host.
+ */
+static void vboxClipRenderAll(HWND hwnd)
+{
+    if (OpenClipboard(hwnd))
+    {
+        if (GetClipboardOwner() == hwnd)
+            EmptyClipboard();
+        CloseClipboard();
+    }
 }
 
 /**
@@ -490,12 +840,20 @@ BOOL VBoxClipboardWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LR
             vboxClipReportGuestFormats(hwnd);
             return TRUE;
 
-        case WM_VBOXCLIP_SET:
-            vboxClipSetGuestText(hwnd, (const WCHAR *)lParam, (DWORD)wParam);
+        case WM_VBOXCLIP_ANNOUNCE:
+            vboxClipAnnounce(hwnd, (UINT32)wParam);
+            return TRUE;
+
+        case WM_RENDERFORMAT:
+            vboxClipRenderFormat((UINT)wParam);
+            return TRUE;
+
+        case WM_RENDERALLFORMATS:
+            vboxClipRenderAll(hwnd);
             return TRUE;
 
         case WM_VBOXCLIP_GET:
-            vboxClipGetGuestText(hwnd, (VBOXCLIPDATA *)lParam);
+            vboxClipGetGuest(hwnd, (UINT32)wParam, (VBOXCLIPDATA *)lParam);
             return TRUE;
 
         default:
@@ -514,6 +872,7 @@ BOOL VBoxClipboardWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LR
 void VBoxClipboardInit(void)
 {
     InitializeCriticalSection(&g_ClipCritSect);
+    g_cfHtml = RegisterClipboardFormat(VBOXCLIP_CF_HTML_NAME);
 }
 
 /**
@@ -537,32 +896,34 @@ void VBoxClipboardStop(void)
 static void vboxClipProcessHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, UINT32 fFormats)
 {
     VBOXCLIPDATA Data;
-    void *pv;
-    UINT32 cb;
+    UINT32 fFormat;
 
     switch (uMsg)
     {
         case VBOX_SHCL_HOST_MSG_FORMATS_REPORT:
-            if (fFormats & VBOX_SHCL_FMT_UNICODETEXT)
-            {
-                if (RT_SUCCESS(vboxClipReadData(hDevice, idClient, VBOX_SHCL_FMT_UNICODETEXT, &pv, &cb)))
-                {
-                    SendMessage(g_hwndVBoxTray, WM_VBOXCLIP_SET, (WPARAM)cb, (LPARAM)pv);
-                    free(pv);
-                }
-            }
-            else
-                SendMessage(g_hwndVBoxTray, WM_VBOXCLIP_SET, 0, (LPARAM)NULL); /* Nothing we can show. */
+            /* Announced to the guest clipboard; the data comes when an application
+               asks for it.  Like upstream, an empty report changes nothing. */
+            if (fFormats != VBOX_SHCL_FMT_NONE)
+                PostMessage(g_hwndVBoxTray, WM_VBOXCLIP_ANNOUNCE, (WPARAM)fFormats, 0);
             break;
 
         case VBOX_SHCL_HOST_MSG_READ_DATA:
-            Data.pwsz = NULL;
-            Data.cb   = 0;
+            /* The host asks for one format at a time. */
             if (fFormats & VBOX_SHCL_FMT_UNICODETEXT)
-                SendMessage(g_hwndVBoxTray, WM_VBOXCLIP_GET, 0, (LPARAM)&Data);
+                fFormat = VBOX_SHCL_FMT_UNICODETEXT;
+            else if (fFormats & VBOX_SHCL_FMT_BITMAP)
+                fFormat = VBOX_SHCL_FMT_BITMAP;
+            else
+                fFormat = fFormats & VBOX_SHCL_FMT_HTML;
+            Data.pv = NULL;
+            Data.cb = 0;
+            if (fFormat)
+                SendMessage(g_hwndVBoxTray, WM_VBOXCLIP_GET, fFormat, (LPARAM)&Data);
+            else
+                fFormat = VBOX_SHCL_FMT_UNICODETEXT;
             /* Always answer, the host waits for it. */
-            vboxClipWriteData(hDevice, idClient, VBOX_SHCL_FMT_UNICODETEXT, Data.pwsz, Data.pwsz ? Data.cb : 0);
-            free(Data.pwsz);
+            vboxClipWriteData(hDevice, idClient, fFormat, Data.pv, Data.pv ? Data.cb : 0);
+            free(Data.pv);
             break;
 
         default:

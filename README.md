@@ -14,10 +14,16 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
   WDM filter driver. Buttons still come through the PS/2 mouse.
 - Time synchronization: sets the guest clock when it is off by 1 second or more,
   every 10 seconds and after restoring a saved state (Windows 98 can't slew the clock).
-- Shared clipboard, text only, using the legacy `VBoxSharedClipboard` HGCM protocol.
+- Shared clipboard, text, images and HTML, using the legacy `VBoxSharedClipboard` HGCM protocol.
   Guest text is ANSI (`CF_TEXT`, converted with the active code page); the
-  host side is UTF-16. Host text is copied to the guest clipboard as soon as
-  the host reports it.
+  host side is UTF-16. Images travel as DIBs (`CF_DIB`; Windows converts to
+  and from `CF_BITMAP`), up to 16 MB (e.g. 2560x1440 at 32 bpp). HTML travels
+  as a UTF-8 fragment, wrapped in (and taken out of) the Windows `HTML Format`
+  (`CF_HTML`) header like upstream does. As upstream, host content uses
+  delayed rendering: the host's formats are announced on the guest clipboard
+  (`CF_TEXT` and `CF_UNICODETEXT` for text, since Windows 98 doesn't convert
+  between them) and the data is fetched from the host only when an application
+  pastes. When VBoxTray exits, host content it announced leaves the clipboard.
 - Guest statistics, at the interval the host asks for (off unless guest metrics
   are requested, e.g. `VBoxManage metrics setup`): physical memory, memory load,
   disk cache, swap file, processes, threads and CPU load (from the Windows 9x
@@ -60,7 +66,8 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
   sessions are combined and sent to the host; everything is undone when a handle closes.
 - Waiting for VMMDev events, with timeout and interruption.
 - Raw VMMDev requests from user mode (requests the driver manages are refused).
-- HGCM connect/disconnect/call (needed by shared clipboard and guest properties).
+- HGCM connect/disconnect/call (needed by shared clipboard and guest properties),
+  with up to 16 MB of buffers per call, bounced through nonpaged memory.
 - Mouse position notification callback for a kernel mode mouse filter (VBoxMous).
 - Guest heartbeat.
 - Optional VM power off when Windows shuts down (`PowerOffOnShutdown` in the INF).
@@ -93,7 +100,7 @@ to VxDs on Windows 98.
 | `VBoxTray/VBoxTray.c` | WinMain, tray icon, service threads |
 | `VBoxTray/Mouse.c` | Mouse pointer integration |
 | `VBoxTray/TimeSync.c` | Guest clock synchronization |
-| `VBoxTray/Clipboard.c` | Shared clipboard (text) |
+| `VBoxTray/Clipboard.c` | Shared clipboard (text, images, HTML) |
 | `VBoxTray/Stats.c` | Guest statistics |
 | `VBoxTray/Display.c` | Display resizing |
 | `VBoxTray/DnD.c` | Drag and drop: HGCM protocol, receiving and sending files, proxy window |
@@ -106,7 +113,7 @@ The driver must only import functions NTKERN.VXD provides: check with
 
 # Todo:
 
-**VBoxTray**: Clipboard bitmaps and HTML.
+**VBoxTray**: Seamless mode, guest properties.
 
 **Mouse**: If the user mode integration proves too slow, a VMOUSE VxD or a HID
 minidriver could use `IOCTL_VBOXGUEST98_INTERNAL_SET_MOUSE_NOTIFY` and
