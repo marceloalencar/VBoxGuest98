@@ -118,7 +118,7 @@ static NTSTATUS NTAPI vgdrvWinAddDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT p
             if (pDevExt->pNextLowerDriver)
             {
                 /* The device interface is how user mode finds us on Windows 98
-                   (VBGTest), failure is not fatal. */
+                   (VBoxTray), failure is not fatal. */
                 rcNt = IoRegisterDeviceInterface(pPdo, &GUID_DEVINTERFACE_VBOXGUEST98, NULL, &pDevExt->InterfaceName);
                 if (!NT_SUCCESS(rcNt))
                     pDevExt->InterfaceName.Buffer = NULL;

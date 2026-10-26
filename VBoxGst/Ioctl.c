@@ -42,36 +42,6 @@ static BOOLEAN vgdrvIsVMMDevRequestAllowed(VMMDevRequestType enmType)
 }
 
 /**
- * IOCTL_VBOXGUEST98_GET_VERSION_INFO.
- */
-static NTSTATUS vgdrvIoCtlGetVersionInfo(PVBOXGUESTDEVEXT pDevExt, PVOID pvBuf, ULONG cbOut, ULONG_PTR *pcbRet)
-{
-    VBOXGUEST98VERSIONINFO *pInfo = (VBOXGUEST98VERSIONINFO *)pvBuf;
-
-    if (cbOut < sizeof(*pInfo))
-        return STATUS_BUFFER_TOO_SMALL;
-
-    RtlZeroMemory(pInfo, sizeof(*pInfo));
-    pInfo->u32InterfaceVersion  = VBOXGUEST98_IOCTL_VERSION;
-    pInfo->uDriverMajor         = VBOX_VERSION_MAJOR;
-    pInfo->uDriverMinor         = VBOX_VERSION_MINOR;
-    pInfo->uDriverBuild         = VBOX_VERSION_BUILD;
-    pInfo->uDriverRevision      = VBOX_SVN_REV;
-    pInfo->uHostMajor           = g_vbgldata.hostVersion.major;
-    pInfo->uHostMinor           = g_vbgldata.hostVersion.minor;
-    pInfo->uHostBuild           = g_vbgldata.hostVersion.build;
-    pInfo->uHostRevision        = g_vbgldata.hostVersion.revision;
-    pInfo->fHostFeatures        = pDevExt->fHostFeatures;
-    pInfo->enmOsType            = (UINT32)pDevExt->enmOsType;
-    pInfo->fFixedEvents         = pDevExt->fFixedEvents;
-    pInfo->cMsHeartbeatInterval = pDevExt->cMsHeartbeatInterval;
-    pInfo->rcHeartbeat          = pDevExt->rcHeartbeat;
-
-    *pcbRet = sizeof(*pInfo);
-    return STATUS_SUCCESS;
-}
-
-/**
  * IOCTL_VBOXGUEST98_VMMDEV_REQUEST.
  *
  * The request is copied into physically contiguous memory, performed and
@@ -222,7 +192,6 @@ NTSTATUS NTAPI vgdrvWinIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
         return vgdrvWinCompleteRequest(pIrp, STATUS_INVALID_PARAMETER, 0);
 
     if (   pDevExtWin->enmDevState != VGDRVWINDEVSTATE_STARTED
-        && uCmd != IOCTL_VBOXGUEST98_GET_VERSION_INFO
         && uCmd != IOCTL_VBOXGUEST98_WRITE_LOG)
         return vgdrvWinCompleteRequest(pIrp, STATUS_DEVICE_NOT_READY, 0);
     if (!pvBuf && (cbIn || cbOut))
@@ -230,21 +199,12 @@ NTSTATUS NTAPI vgdrvWinIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 
     switch (uCmd)
     {
-        case IOCTL_VBOXGUEST98_GET_VERSION_INFO:
-            rcNt = vgdrvIoCtlGetVersionInfo(pDevExt, pvBuf, cbOut, &cbRet);
-            break;
-
         case IOCTL_VBOXGUEST98_VMMDEV_REQUEST:
             rcNt = vgdrvIoCtlVMMDevRequest(pSession, pvBuf, cbIn, cbOut, &cbRet);
             break;
 
         case IOCTL_VBOXGUEST98_WAIT_FOR_EVENTS:
             rcNt = vgdrvIoCtlWaitForEvents(pDevExt, pSession, pvBuf, cbIn, cbOut, &cbRet);
-            break;
-
-        case IOCTL_VBOXGUEST98_INTERRUPT_WAITS:
-            VGDrvCommonInterruptWaits(pDevExt, pSession);
-            rcNt = STATUS_SUCCESS;
             break;
 
         case IOCTL_VBOXGUEST98_CHANGE_FILTER_MASK:

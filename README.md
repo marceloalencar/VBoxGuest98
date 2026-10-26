@@ -4,8 +4,6 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 ## Components
 **VBoxGst**: PCI driver for VirtualBox Guest Device (`PCI\VEN_80EE&DEV_CAFE`)
 
-**VBGTest**: Checks if driver is installed correctly and exercises its interface.
-
 **VBoxTray**: Tray application started at logon:
 - Mouse pointer integration
 - Time synchronization

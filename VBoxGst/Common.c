@@ -279,7 +279,6 @@ static void vgdrvHeartbeatInit(PVBOXGUESTDEVEXT pDevExt)
     int rc;
 
     rc = VbglR0GRAlloc(&pDevExt->pHeartbeatReq, sizeof(VMMDevRequestHeader), VMMDevReq_GuestHeartbeat);
-    pDevExt->rcHeartbeat = rc;
     if (RT_FAILURE(rc))
     {
         VGDrvLogRel("heartbeat request allocation failed, rc=%d\n", rc);
@@ -287,7 +286,6 @@ static void vgdrvHeartbeatInit(PVBOXGUESTDEVEXT pDevExt)
     }
 
     rc = vgdrvHeartbeatHostConfigure(TRUE, &cMsInterval);
-    pDevExt->rcHeartbeat = rc;
     if (RT_FAILURE(rc) || cMsInterval == 0)
     {
         VGDrvLogRel("heartbeat not started, rc=%d\n", rc);
@@ -297,7 +295,6 @@ static void vgdrvHeartbeatInit(PVBOXGUESTDEVEXT pDevExt)
     }
 
     VGDrvLogRel("heartbeat every %u ms\n", cMsInterval);
-    pDevExt->cMsHeartbeatInterval = cMsInterval;
     VbglR0GRPerform(pDevExt->pHeartbeatReq);
 
     DueTime.QuadPart = Int32x32To64(cMsInterval, -10000);
@@ -318,7 +315,6 @@ static void vgdrvHeartbeatTerm(PVBOXGUESTDEVEXT pDevExt)
 
     VbglR0GRFree(pDevExt->pHeartbeatReq);
     pDevExt->pHeartbeatReq = NULL;
-    pDevExt->cMsHeartbeatInterval = 0;
 }
 
 

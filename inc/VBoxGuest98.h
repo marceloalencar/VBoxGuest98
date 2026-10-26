@@ -1,7 +1,7 @@
 /** @file
  * VBoxGuest98 - Interface between the VBoxGst driver and its clients.
  *
- * Shared by the driver, user mode programs (VBGTest, the future VBoxTray) and
+ * Shared by the driver, user mode programs (VBoxTray) and
  * kernel mode clients (the future VBoxMous filter driver).
  *
  * NOTE: This is NOT binary compatible with the VBGL_IOCTL_XXX interface of
@@ -36,9 +36,6 @@
 *   Versions and names                                                                                                           *
 *********************************************************************************************************************************/
 
-/** Version of this interface, high word is major (incompatible changes). */
-#define VBOXGUEST98_IOCTL_VERSION       (0x00010003U)
-
 /** Native device name. */
 #define VBOXGUEST98_DEVICE_NAME_NT      L"\\Device\\VBoxGuest"
 /** DOS device name (symbolic link). */
@@ -54,10 +51,10 @@ DEFINE_GUID(GUID_DEVINTERFACE_VBOXGUEST98,
 
 /** Largest raw VMMDev request accepted by IOCTL_VBOXGUEST98_VMMDEV_REQUEST. */
 #define VBOXGUEST98_MAX_VMMDEV_REQUEST_SIZE (16384U)
-/** Largest data area accepted by IOCTL_VBOXGUEST98_HGCM_CALL (256 KB before
- *  interface 1.3); room for a 2560x1440 32 bpp clipboard image.  The driver
- *  bounces the buffers through nonpaged memory, so big calls may fail with
- *  VERR_NO_MEMORY on guests with little RAM. */
+/** Largest data area accepted by IOCTL_VBOXGUEST98_HGCM_CALL; room for a
+ *  2560x1440 32 bpp clipboard image.  The driver bounces the buffers through
+ *  nonpaged memory, so big calls may fail with VERR_NO_MEMORY on guests with
+ *  little RAM. */
 #define VBOXGUEST98_MAX_HGCM_DATA_SIZE  (16U * 1024 * 1024)
 /** Number of HGCM clients a single session may have connected at once. */
 #define VBOXGUEST98_MAX_HGCM_CLIENTS    (32)
@@ -72,8 +69,6 @@ DEFINE_GUID(GUID_DEVINTERFACE_VBOXGUEST98,
 #define VBOXGUEST98_IOCTL_CODE(Function) \
     CTL_CODE(FILE_DEVICE_UNKNOWN, 2048 + (Function), METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-/** Get driver, interface and host versions.  Out: VBOXGUEST98VERSIONINFO. */
-#define IOCTL_VBOXGUEST98_GET_VERSION_INFO          VBOXGUEST98_IOCTL_CODE(0)
 /** Perform a raw VMMDev request.
  *  In/out: a VMMDevRequestHeader based request, header.size bytes long.
  *  Requests the driver manages itself (event acknowledging, filter mask,
@@ -82,8 +77,6 @@ DEFINE_GUID(GUID_DEVINTERFACE_VBOXGUEST98,
 #define IOCTL_VBOXGUEST98_VMMDEV_REQUEST            VBOXGUEST98_IOCTL_CODE(1)
 /** Wait for VMMDev events.  In/out: VBOXGUEST98WAITEVENTS. */
 #define IOCTL_VBOXGUEST98_WAIT_FOR_EVENTS           VBOXGUEST98_IOCTL_CODE(2)
-/** Wake up all IOCTL_VBOXGUEST98_WAIT_FOR_EVENTS waiters of this handle. */
-#define IOCTL_VBOXGUEST98_INTERRUPT_WAITS           VBOXGUEST98_IOCTL_CODE(3)
 /** Change the events this handle is interested in.  In: VBOXGUEST98CHANGEMASK. */
 #define IOCTL_VBOXGUEST98_CHANGE_FILTER_MASK        VBOXGUEST98_IOCTL_CODE(4)
 /** Change the guest capabilities (VMMDEV_GUEST_SUPPORTS_XXX) this handle
@@ -100,7 +93,7 @@ DEFINE_GUID(GUID_DEVINTERFACE_VBOXGUEST98,
  *  cParms VBOXGUEST98HGCMPARM entries and the data area. */
 #define IOCTL_VBOXGUEST98_HGCM_CALL                 VBOXGUEST98_IOCTL_CODE(9)
 /** Write text to the release log (VBox.log on the host, through the VMMDev
- *  backdoor port; since interface 1.2).  In: the text, no terminator; lines
+ *  backdoor port).  In: the text, no terminator; lines
  *  should end with a newline. */
 #define IOCTL_VBOXGUEST98_WRITE_LOG                 VBOXGUEST98_IOCTL_CODE(10)
 
@@ -120,33 +113,6 @@ DEFINE_GUID(GUID_DEVINTERFACE_VBOXGUEST98,
 /*********************************************************************************************************************************
 *   I/O control structures                                                                                                       *
 *********************************************************************************************************************************/
-
-/** IOCTL_VBOXGUEST98_GET_VERSION_INFO output. */
-typedef struct VBOXGUEST98VERSIONINFO
-{
-    /** VBOXGUEST98_IOCTL_VERSION. */
-    UINT32 u32InterfaceVersion;
-    /** Guest additions version. */
-    USHORT uDriverMajor;
-    USHORT uDriverMinor;
-    UINT32 uDriverBuild;
-    UINT32 uDriverRevision;
-    /** Host (VirtualBox) version. */
-    USHORT uHostMajor;
-    USHORT uHostMinor;
-    UINT32 uHostBuild;
-    UINT32 uHostRevision;
-    /** Host feature flags (VMMDEV_HVF_XXX). */
-    UINT32 fHostFeatures;
-    /** Guest OS type reported to the host (VBOXOSTYPE). */
-    UINT32 enmOsType;
-    /** Events always enabled by the driver. */
-    UINT32 fFixedEvents;
-    /** Heartbeat interval in milliseconds, 0 if disabled. */
-    UINT32 cMsHeartbeatInterval;
-    /** VBox status of the heartbeat setup (since interface 1.1). */
-    INT32  rcHeartbeat;
-} VBOXGUEST98VERSIONINFO;
 
 /** IOCTL_VBOXGUEST98_WAIT_FOR_EVENTS input/output. */
 typedef struct VBOXGUEST98WAITEVENTS

@@ -11,7 +11,7 @@
  * compile time at the end of this file.
  *
  * This header has no kernel dependencies and is shared by the driver
- * (VBoxGst) and user mode tools (VBGTest).  Include <wdm.h> or <windows.h>
+ * (VBoxGst) and user mode programs (VBoxTray).  Include <wdm.h> or <windows.h>
  * before it.
  */
 
@@ -678,7 +678,7 @@ typedef struct
 
 
 /*********************************************************************************************************************************
-*   Guest property HGCM service (used by VBGTest)                                                                                *
+*   Guest property HGCM service (not used yet)                                                                                   *
 *********************************************************************************************************************************/
 
 #define GUEST_PROP_SERVICE_NAME                         "VBoxGuestPropSvc"

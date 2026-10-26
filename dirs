@@ -1,4 +1,3 @@
 DIRS= \
      VBoxGst \
-     VBGTest \
      VBoxTray
