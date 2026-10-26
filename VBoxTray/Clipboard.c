@@ -91,52 +91,25 @@ static UINT g_cfHtml = 0;
 *********************************************************************************************************************************/
 
 /**
- * Allocates a zeroed HGCM call with room for cParms parameters and cbData
- * bytes of data placed right after them.
- */
-static VBOXGUEST98HGCMCALL *vboxClipAllocCall(UINT32 idClient, UINT32 uFunction, UINT32 cParms, UINT32 cMsTimeout,
-                                             DWORD cbData, DWORD *pcbCall)
-{
-    DWORD cbCall = sizeof(VBOXGUEST98HGCMCALL) + cParms * sizeof(VBOXGUEST98HGCMPARM) + cbData;
-    VBOXGUEST98HGCMCALL *pCall = (VBOXGUEST98HGCMCALL *)calloc(1, cbCall);
-    if (pCall)
-    {
-        pCall->u32ClientID = idClient;
-        pCall->u32Function = uFunction;
-        pCall->cMsTimeout  = cMsTimeout;
-        pCall->cParms      = cParms;
-    }
-    *pcbCall = cbCall;
-    return pCall;
-}
-
-/** Offset of the data area of a call made by vboxClipAllocCall. */
-#define VBOXCLIP_DATA_OFF(cParms)   (sizeof(VBOXGUEST98HGCMCALL) + (cParms) * sizeof(VBOXGUEST98HGCMPARM))
-
-/**
  * Waits for the next host message.
  */
 static int vboxClipGetHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 *puMsg, UINT32 *pfFormats)
 {
-    VBOXGUEST98HGCMPARM *paParms;
-    VBOXGUEST98HGCMCALL *pCall;
-    DWORD cbCall;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    pCall = vboxClipAllocCall(idClient, VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT, 2, VBOXGUEST98_WAIT_INFINITE, 0, &cbCall);
-    if (!pCall)
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT, 2, VBOXGUEST98_WAIT_INFINITE, 0))
         return VERR_NO_MEMORY;
-    paParms = VBOXGUEST98_HGCM_CALL_PARMS(pCall);
-    paParms[0].enmType = VBOXGUEST98_HGCM_PARM_32BIT;
-    paParms[1].enmType = VBOXGUEST98_HGCM_PARM_32BIT;
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);
+    VbglR3HgcmMsgSetU32(&Msg, 1, 0);
 
-    rc = VbglR3HgcmCall(hDevice, pCall, cbCall);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
     if (RT_SUCCESS(rc))
     {
-        *puMsg     = (UINT32)paParms[0].u64Value;
-        *pfFormats = (UINT32)paParms[1].u64Value;
+        *puMsg     = VbglR3HgcmMsgGetU32(&Msg, 0);
+        *pfFormats = VbglR3HgcmMsgGetU32(&Msg, 1);
     }
-    free(pCall);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -145,18 +118,15 @@ static int vboxClipGetHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 *puMsg, UI
  */
 static int vboxClipReportFormats(HANDLE hDevice, UINT32 idClient, UINT32 fFormats)
 {
-    VBOXGUEST98HGCMCALL *pCall;
-    DWORD cbCall;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    pCall = vboxClipAllocCall(idClient, VBOX_SHCL_GUEST_FN_REPORT_FORMATS, 1, VBOXCLIP_CALL_TIMEOUT_MS, 0, &cbCall);
-    if (!pCall)
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_REPORT_FORMATS, 1, VBOXCLIP_CALL_TIMEOUT_MS, 0))
         return VERR_NO_MEMORY;
-    VBOXGUEST98_HGCM_CALL_PARMS(pCall)[0].enmType  = VBOXGUEST98_HGCM_PARM_32BIT;
-    VBOXGUEST98_HGCM_CALL_PARMS(pCall)[0].u64Value = fFormats;
+    VbglR3HgcmMsgSetU32(&Msg, 0, fFormats);
 
-    rc = VbglR3HgcmCall(hDevice, pCall, cbCall);
-    free(pCall);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -170,11 +140,10 @@ static int vboxClipReportFormats(HANDLE hDevice, UINT32 idClient, UINT32 fFormat
  */
 static int vboxClipReadData(HANDLE hDevice, UINT32 idClient, UINT32 fFormat, void **ppv, UINT32 *pcb)
 {
-    VBOXGUEST98HGCMPARM *paParms;
-    VBOXGUEST98HGCMCALL *pCall;
+    VBGLR3HGCMMSG Msg;
+    BYTE *pbBuf;
     UINT32 cbBuf = VBOXCLIP_READ_SIZE;
     UINT32 cbActual;
-    DWORD cbCall;
     int iTry;
     int rc = VERR_BUFFER_OVERFLOW;
 
@@ -182,34 +151,29 @@ static int vboxClipReadData(HANDLE hDevice, UINT32 idClient, UINT32 fFormat, voi
     *pcb = 0;
     for (iTry = 0; iTry < 2; iTry++)
     {
-        pCall = vboxClipAllocCall(idClient, VBOX_SHCL_GUEST_FN_DATA_READ, 3, VBOXCLIP_CALL_TIMEOUT_MS, cbBuf, &cbCall);
-        if (!pCall)
+        if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_DATA_READ, 3, VBOXCLIP_CALL_TIMEOUT_MS, cbBuf))
             return VERR_NO_MEMORY;
-        paParms = VBOXGUEST98_HGCM_CALL_PARMS(pCall);
-        paParms[0].enmType  = VBOXGUEST98_HGCM_PARM_32BIT;
-        paParms[0].u64Value = fFormat;
-        paParms[1].enmType  = VBOXGUEST98_HGCM_PARM_BUFFER_OUT;
-        paParms[1].cb       = cbBuf;
-        paParms[1].off      = VBOXCLIP_DATA_OFF(3);
-        paParms[2].enmType  = VBOXGUEST98_HGCM_PARM_32BIT;
+        VbglR3HgcmMsgSetU32(&Msg, 0, fFormat);
+        pbBuf = VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, cbBuf, NULL);
+        VbglR3HgcmMsgSetU32(&Msg, 2, 0);
 
-        rc = VbglR3HgcmCall(hDevice, pCall, cbCall);
-        cbActual = (UINT32)paParms[2].u64Value;
+        rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+        cbActual = VbglR3HgcmMsgGetU32(&Msg, 2);
         if (RT_SUCCESS(rc) && rc != VINF_BUFFER_OVERFLOW && cbActual <= cbBuf)
         {
             *ppv = malloc(cbActual + sizeof(WCHAR));
             if (*ppv)
             {
-                memcpy(*ppv, (BYTE *)pCall + VBOXCLIP_DATA_OFF(3), cbActual);
+                memcpy(*ppv, pbBuf, cbActual);
                 memset((BYTE *)*ppv + cbActual, 0, sizeof(WCHAR));
                 *pcb = cbActual;
             }
             else
                 rc = VERR_NO_MEMORY;
-            free(pCall);
+            VbglR3HgcmMsgFree(&Msg);
             return rc;
         }
-        free(pCall);
+        VbglR3HgcmMsgFree(&Msg);
         if (RT_FAILURE(rc))
             return rc;
 
@@ -229,28 +193,19 @@ static int vboxClipReadData(HANDLE hDevice, UINT32 idClient, UINT32 fFormat, voi
  */
 static int vboxClipWriteData(HANDLE hDevice, UINT32 idClient, UINT32 fFormat, const void *pv, UINT32 cb)
 {
-    VBOXGUEST98HGCMPARM *paParms;
-    VBOXGUEST98HGCMCALL *pCall;
-    DWORD cbCall;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
     if (cb > VBOXGUEST98_MAX_HGCM_DATA_SIZE)
         cb = 0; /* Too big for the driver, send nothing rather than leaving the host waiting. */
 
-    pCall = vboxClipAllocCall(idClient, VBOX_SHCL_GUEST_FN_DATA_WRITE, 2, VBOXCLIP_CALL_TIMEOUT_MS, cb, &cbCall);
-    if (!pCall)
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_DATA_WRITE, 2, VBOXCLIP_CALL_TIMEOUT_MS, cb))
         return VERR_NO_MEMORY;
-    paParms = VBOXGUEST98_HGCM_CALL_PARMS(pCall);
-    paParms[0].enmType  = VBOXGUEST98_HGCM_PARM_32BIT;
-    paParms[0].u64Value = fFormat;
-    paParms[1].enmType  = VBOXGUEST98_HGCM_PARM_BUFFER_IN;
-    paParms[1].cb       = cb;
-    paParms[1].off      = VBOXCLIP_DATA_OFF(2);
-    if (cb)
-        memcpy((BYTE *)pCall + VBOXCLIP_DATA_OFF(2), pv, cb);
+    VbglR3HgcmMsgSetU32(&Msg, 0, fFormat);
+    VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cb, pv);
 
-    rc = VbglR3HgcmCall(hDevice, pCall, cbCall);
-    free(pCall);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 

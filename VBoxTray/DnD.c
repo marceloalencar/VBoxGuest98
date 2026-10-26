@@ -85,15 +85,6 @@
 *   Structures and Typedefs                                                                                                      *
 *********************************************************************************************************************************/
 
-/** HGCM call being built: header, parameters, then the buffers. */
-typedef struct VBOXDNDMSG
-{
-    VBOXGUEST98HGCMCALL *pCall;
-    DWORD                cbCall;
-    /** Offset of the next unused data byte. */
-    DWORD                offNext;
-} VBOXDNDMSG;
-
 /** WM_VBOXDND_ENTER data. */
 typedef struct VBOXDNDENTER
 {
@@ -205,116 +196,35 @@ static HANDLE g_hDnDGhDropped = NULL;
 *********************************************************************************************************************************/
 
 /**
- * Starts an HGCM call with cParms parameters and cbData bytes of buffers.
- */
-static BOOL vboxDnDMsgInit(VBOXDNDMSG *pMsg, UINT32 idClient, UINT32 uFunction, UINT32 cParms, UINT32 cMsTimeout,
-                           DWORD cbData)
-{
-    DWORD offData = sizeof(VBOXGUEST98HGCMCALL) + cParms * sizeof(VBOXGUEST98HGCMPARM);
-
-    pMsg->cbCall  = offData + cbData;
-    pMsg->offNext = offData;
-    pMsg->pCall   = (VBOXGUEST98HGCMCALL *)calloc(1, pMsg->cbCall);
-    if (!pMsg->pCall)
-        return FALSE;
-    pMsg->pCall->u32ClientID = idClient;
-    pMsg->pCall->u32Function = uFunction;
-    pMsg->pCall->cMsTimeout  = cMsTimeout;
-    pMsg->pCall->cParms      = cParms;
-    return TRUE;
-}
-
-static void vboxDnDMsgSetU32(VBOXDNDMSG *pMsg, UINT32 iParm, UINT32 u32)
-{
-    VBOXGUEST98HGCMPARM *pParm = &VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm];
-    pParm->enmType  = VBOXGUEST98_HGCM_PARM_32BIT;
-    pParm->u64Value = u32;
-}
-
-static void vboxDnDMsgSetU64(VBOXDNDMSG *pMsg, UINT32 iParm, UINT64 u64)
-{
-    VBOXGUEST98HGCMPARM *pParm = &VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm];
-    pParm->enmType  = VBOXGUEST98_HGCM_PARM_64BIT;
-    pParm->u64Value = u64;
-}
-
-/**
- * Sets a buffer parameter, placing the buffer in the call's data area.
- *
- * @returns The buffer in the call.
- * @param   pvIn    Data to copy in (NULL for output buffers).
- */
-static BYTE *vboxDnDMsgSetBuf(VBOXDNDMSG *pMsg, UINT32 iParm, UINT32 enmType, DWORD cb, const void *pvIn)
-{
-    VBOXGUEST98HGCMPARM *pParm = &VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm];
-    BYTE *pb = (BYTE *)pMsg->pCall + pMsg->offNext;
-
-    pParm->enmType = enmType;
-    pParm->cb      = cb;
-    pParm->off     = pMsg->offNext;
-    if (pvIn && cb)
-        memcpy(pb, pvIn, cb);
-    pMsg->offNext += cb;
-    return pb;
-}
-
-static UINT32 vboxDnDMsgGetU32(VBOXDNDMSG *pMsg, UINT32 iParm)
-{
-    return (UINT32)VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm].u64Value;
-}
-
-static UINT64 vboxDnDMsgGetU64(VBOXDNDMSG *pMsg, UINT32 iParm)
-{
-    return VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm].u64Value;
-}
-
-/** Returns the size the host put in a buffer parameter. */
-static UINT32 vboxDnDMsgGetBufSize(VBOXDNDMSG *pMsg, UINT32 iParm)
-{
-    return VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm].cb;
-}
-
-static int vboxDnDMsgCall(HANDLE hDevice, VBOXDNDMSG *pMsg)
-{
-    return VbglR3HgcmCall(hDevice, pMsg->pCall, pMsg->cbCall);
-}
-
-static void vboxDnDMsgFree(VBOXDNDMSG *pMsg)
-{
-    free(pMsg->pCall);
-    pMsg->pCall = NULL;
-}
-
-/**
  * Connects to the service and does the protocol handshake (VbglR3DnDConnect).
  */
 static int vboxDnDConnect(HANDLE hDevice, UINT32 *pidClient)
 {
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
     rc = VbglR3HgcmConnect(hDevice, VBOX_DND_SERVICE_NAME, pidClient);
     if (RT_FAILURE(rc))
         return rc;
 
-    if (!vboxDnDMsgInit(&Msg, *pidClient, GUEST_DND_FN_CONNECT, 3, VBOXDND_CALL_TIMEOUT_MS, 0))
+    if (!VbglR3HgcmMsgInit(&Msg, *pidClient, GUEST_DND_FN_CONNECT, 3, VBOXDND_CALL_TIMEOUT_MS, 0))
         rc = VERR_NO_MEMORY;
     else
     {
-        vboxDnDMsgSetU32(&Msg, 0, 0);                           /* uContext */
-        vboxDnDMsgSetU32(&Msg, 1, VBOX_DND_PROTOCOL_VERSION);   /* uProtocol */
-        vboxDnDMsgSetU32(&Msg, 2, 0);                           /* uFlags */
-        rc = vboxDnDMsgCall(hDevice, &Msg);
-        vboxDnDMsgFree(&Msg);
+        VbglR3HgcmMsgSetU32(&Msg, 0, 0);                           /* uContext */
+        VbglR3HgcmMsgSetU32(&Msg, 1, VBOX_DND_PROTOCOL_VERSION);   /* uProtocol */
+        VbglR3HgcmMsgSetU32(&Msg, 2, 0);                           /* uFlags */
+        rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+        VbglR3HgcmMsgFree(&Msg);
     }
 
     /* Reporting the features fails on older hosts, which is fine. */
-    if (RT_SUCCESS(rc) && vboxDnDMsgInit(&Msg, *pidClient, GUEST_DND_FN_REPORT_FEATURES, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
+    if (RT_SUCCESS(rc) && VbglR3HgcmMsgInit(&Msg, *pidClient, GUEST_DND_FN_REPORT_FEATURES, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
     {
-        vboxDnDMsgSetU64(&Msg, 0, VBOX_DND_GF_NONE);
-        vboxDnDMsgSetU64(&Msg, 1, VBOX_DND_GF_1_MUST_BE_ONE);
-        vboxDnDMsgCall(hDevice, &Msg);
-        vboxDnDMsgFree(&Msg);
+        VbglR3HgcmMsgSetU64(&Msg, 0, VBOX_DND_GF_NONE);
+        VbglR3HgcmMsgSetU64(&Msg, 1, VBOX_DND_GF_1_MUST_BE_ONE);
+        VbglR3HgcmMsgCall(hDevice, &Msg);
+        VbglR3HgcmMsgFree(&Msg);
     }
 
     if (RT_FAILURE(rc))
@@ -333,23 +243,23 @@ static int vboxDnDConnect(HANDLE hDevice, UINT32 *pidClient)
  */
 static int vboxDnDGetNextMsg(HANDLE hDevice, UINT32 idClient, UINT32 *puMsg, UINT32 *pcParms)
 {
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
     do
     {
-        if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GET_NEXT_HOST_MSG, 3, VBOXGUEST98_WAIT_INFINITE, 0))
+        if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_GET_NEXT_HOST_MSG, 3, VBOXGUEST98_WAIT_INFINITE, 0))
             return VERR_NO_MEMORY;
-        vboxDnDMsgSetU32(&Msg, 0, 0);   /* uMsg */
-        vboxDnDMsgSetU32(&Msg, 1, 0);   /* cParms */
-        vboxDnDMsgSetU32(&Msg, 2, 1);   /* fBlock */
-        rc = vboxDnDMsgCall(hDevice, &Msg);
+        VbglR3HgcmMsgSetU32(&Msg, 0, 0);   /* uMsg */
+        VbglR3HgcmMsgSetU32(&Msg, 1, 0);   /* cParms */
+        VbglR3HgcmMsgSetU32(&Msg, 2, 1);   /* fBlock */
+        rc = VbglR3HgcmMsgCall(hDevice, &Msg);
         if (RT_SUCCESS(rc))
         {
-            *puMsg   = vboxDnDMsgGetU32(&Msg, 0);
-            *pcParms = vboxDnDMsgGetU32(&Msg, 1);
+            *puMsg   = VbglR3HgcmMsgGetU32(&Msg, 0);
+            *pcParms = VbglR3HgcmMsgGetU32(&Msg, 1);
         }
-        vboxDnDMsgFree(&Msg);
+        VbglR3HgcmMsgFree(&Msg);
     } while (rc == VERR_INTERRUPTED && !g_fVBoxTrayShutdown);
     return rc;
 }
@@ -359,14 +269,14 @@ static int vboxDnDGetNextMsg(HANDLE hDevice, UINT32 idClient, UINT32 *puMsg, UIN
  */
 static int vboxDnDRecvSimple(HANDLE hDevice, UINT32 idClient, UINT32 uMsg)
 {
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, uMsg, 1, VBOXDND_CALL_TIMEOUT_MS, 0))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, uMsg, 1, VBOXDND_CALL_TIMEOUT_MS, 0))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -378,30 +288,30 @@ static int vboxDnDRecvSimple(HANDLE hDevice, UINT32 idClient, UINT32 uMsg)
 static int vboxDnDRecvAction(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, UINT32 *px, UINT32 *py,
                              VBOXDNDENTER **ppEnter)
 {
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     BYTE *pbFormats;
     UINT32 cbFormats;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, uMsg, 8, VBOXDND_CALL_TIMEOUT_MS, VBOX_DND_CHUNK_SIZE))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, uMsg, 8, VBOXDND_CALL_TIMEOUT_MS, VBOX_DND_CHUNK_SIZE))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);   /* uContext */
-    vboxDnDMsgSetU32(&Msg, 1, 0);   /* uScreenId */
-    vboxDnDMsgSetU32(&Msg, 2, 0);   /* uX */
-    vboxDnDMsgSetU32(&Msg, 3, 0);   /* uY */
-    vboxDnDMsgSetU32(&Msg, 4, 0);   /* uDefAction */
-    vboxDnDMsgSetU32(&Msg, 5, 0);   /* uAllActions */
-    pbFormats = vboxDnDMsgSetBuf(&Msg, 6, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, VBOX_DND_CHUNK_SIZE, NULL);
-    vboxDnDMsgSetU32(&Msg, 7, 0);   /* cbFormats */
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);   /* uContext */
+    VbglR3HgcmMsgSetU32(&Msg, 1, 0);   /* uScreenId */
+    VbglR3HgcmMsgSetU32(&Msg, 2, 0);   /* uX */
+    VbglR3HgcmMsgSetU32(&Msg, 3, 0);   /* uY */
+    VbglR3HgcmMsgSetU32(&Msg, 4, 0);   /* uDefAction */
+    VbglR3HgcmMsgSetU32(&Msg, 5, 0);   /* uAllActions */
+    pbFormats = VbglR3HgcmMsgSetBuf(&Msg, 6, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, VBOX_DND_CHUNK_SIZE, NULL);
+    VbglR3HgcmMsgSetU32(&Msg, 7, 0);   /* cbFormats */
 
-    rc = vboxDnDMsgCall(hDevice, &Msg);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
     if (RT_SUCCESS(rc))
     {
-        *px = vboxDnDMsgGetU32(&Msg, 2);
-        *py = vboxDnDMsgGetU32(&Msg, 3);
+        *px = VbglR3HgcmMsgGetU32(&Msg, 2);
+        *py = VbglR3HgcmMsgGetU32(&Msg, 3);
         if (ppEnter)
         {
-            cbFormats = vboxDnDMsgGetBufSize(&Msg, 6);
+            cbFormats = VbglR3HgcmMsgGetBufSize(&Msg, 6);
             if (cbFormats > VBOX_DND_CHUNK_SIZE)
                 cbFormats = VBOX_DND_CHUNK_SIZE;
             *ppEnter = (VBOXDNDENTER *)malloc(sizeof(VBOXDNDENTER) + cbFormats);
@@ -409,7 +319,7 @@ static int vboxDnDRecvAction(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, UINT3
             {
                 (*ppEnter)->x           = *px;
                 (*ppEnter)->y           = *py;
-                (*ppEnter)->fAllActions = vboxDnDMsgGetU32(&Msg, 5);
+                (*ppEnter)->fAllActions = VbglR3HgcmMsgGetU32(&Msg, 5);
                 memcpy((*ppEnter)->szFormats, pbFormats, cbFormats);
                 (*ppEnter)->szFormats[cbFormats] = '\0';
             }
@@ -417,7 +327,7 @@ static int vboxDnDRecvAction(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, UINT3
                 rc = VERR_NO_MEMORY;
         }
     }
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -426,15 +336,15 @@ static int vboxDnDRecvAction(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, UINT3
  */
 static int vboxDnDSendAck(HANDLE hDevice, UINT32 idClient, UINT32 uAction)
 {
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_HG_ACK_OP, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_HG_ACK_OP, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);
-    vboxDnDMsgSetU32(&Msg, 1, uAction);
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);
+    VbglR3HgcmMsgSetU32(&Msg, 1, uAction);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -444,16 +354,16 @@ static int vboxDnDSendAck(HANDLE hDevice, UINT32 idClient, UINT32 uAction)
 static int vboxDnDSendReqData(HANDLE hDevice, UINT32 idClient, const char *pszFormat)
 {
     DWORD cbFormat = lstrlen(pszFormat) + 1;
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_HG_REQ_DATA, 3, VBOXDND_CALL_TIMEOUT_MS, cbFormat))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_HG_REQ_DATA, 3, VBOXDND_CALL_TIMEOUT_MS, cbFormat))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);
-    vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbFormat, pszFormat);
-    vboxDnDMsgSetU32(&Msg, 2, cbFormat);
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);
+    VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbFormat, pszFormat);
+    VbglR3HgcmMsgSetU32(&Msg, 2, cbFormat);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -462,17 +372,17 @@ static int vboxDnDSendReqData(HANDLE hDevice, UINT32 idClient, const char *pszFo
  */
 static int vboxDnDSendProgress(HANDLE hDevice, UINT32 idClient, UINT32 uStatus, UINT32 uPercent, int rcErr)
 {
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_HG_EVT_PROGRESS, 4, VBOXDND_CALL_TIMEOUT_MS, 0))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_HG_EVT_PROGRESS, 4, VBOXDND_CALL_TIMEOUT_MS, 0))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);
-    vboxDnDMsgSetU32(&Msg, 1, uStatus);
-    vboxDnDMsgSetU32(&Msg, 2, uPercent);
-    vboxDnDMsgSetU32(&Msg, 3, (UINT32)rcErr);
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);
+    VbglR3HgcmMsgSetU32(&Msg, 1, uStatus);
+    VbglR3HgcmMsgSetU32(&Msg, 2, uPercent);
+    VbglR3HgcmMsgSetU32(&Msg, 3, (UINT32)rcErr);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -481,15 +391,15 @@ static int vboxDnDSendProgress(HANDLE hDevice, UINT32 idClient, UINT32 uStatus, 
  */
 static int vboxDnDRecvGhPending(HANDLE hDevice, UINT32 idClient)
 {
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, HOST_DND_FN_GH_REQ_PENDING, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, HOST_DND_FN_GH_REQ_PENDING, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);
-    vboxDnDMsgSetU32(&Msg, 1, 0);
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);
+    VbglR3HgcmMsgSetU32(&Msg, 1, 0);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -502,18 +412,18 @@ static int vboxDnDRecvGhPending(HANDLE hDevice, UINT32 idClient)
 static int vboxDnDSendAckPending(HANDLE hDevice, UINT32 idClient, UINT32 uAction, const char *pszFormats)
 {
     DWORD cbFormats = lstrlen(pszFormats) + 1;
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_ACK_PENDING, 5, VBOXDND_CALL_TIMEOUT_MS, cbFormats))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_GH_ACK_PENDING, 5, VBOXDND_CALL_TIMEOUT_MS, cbFormats))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);                           /* uContext */
-    vboxDnDMsgSetU32(&Msg, 1, uAction);                     /* uDefAction */
-    vboxDnDMsgSetU32(&Msg, 2, uAction);                     /* uAllActions */
-    vboxDnDMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbFormats, pszFormats);
-    vboxDnDMsgSetU32(&Msg, 4, cbFormats);                   /* cbFormats */
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);                           /* uContext */
+    VbglR3HgcmMsgSetU32(&Msg, 1, uAction);                     /* uDefAction */
+    VbglR3HgcmMsgSetU32(&Msg, 2, uAction);                     /* uAllActions */
+    VbglR3HgcmMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbFormats, pszFormats);
+    VbglR3HgcmMsgSetU32(&Msg, 4, cbFormats);                   /* cbFormats */
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -525,20 +435,20 @@ static int vboxDnDSendAckPending(HANDLE hDevice, UINT32 idClient, UINT32 uAction
  */
 static int vboxDnDRecvGhDropped(HANDLE hDevice, UINT32 idClient, char *pszFormat, DWORD cbFormat)
 {
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     BYTE *pb;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, HOST_DND_FN_GH_EVT_DROPPED, 4, VBOXDND_CALL_TIMEOUT_MS, VBOX_DND_CHUNK_SIZE))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, HOST_DND_FN_GH_EVT_DROPPED, 4, VBOXDND_CALL_TIMEOUT_MS, VBOX_DND_CHUNK_SIZE))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);                                                               /* uContext */
-    pb = vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, VBOX_DND_CHUNK_SIZE, NULL);    /* pvFormat */
-    vboxDnDMsgSetU32(&Msg, 2, 0);                                                               /* cbFormat */
-    vboxDnDMsgSetU32(&Msg, 3, 0);                                                               /* uAction */
-    rc = vboxDnDMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                               /* uContext */
+    pb = VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, VBOX_DND_CHUNK_SIZE, NULL);    /* pvFormat */
+    VbglR3HgcmMsgSetU32(&Msg, 2, 0);                                                               /* cbFormat */
+    VbglR3HgcmMsgSetU32(&Msg, 3, 0);                                                               /* uAction */
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
     if (RT_SUCCESS(rc))
         lstrcpyn(pszFormat, (const char *)pb, cbFormat < VBOX_DND_CHUNK_SIZE ? cbFormat : VBOX_DND_CHUNK_SIZE);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -547,15 +457,15 @@ static int vboxDnDRecvGhDropped(HANDLE hDevice, UINT32 idClient, char *pszFormat
  */
 static int vboxDnDSendError(HANDLE hDevice, UINT32 idClient, int rcErr)
 {
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_EVT_ERROR, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_EVT_ERROR, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);
-    vboxDnDMsgSetU32(&Msg, 1, (UINT32)rcErr);
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);
+    VbglR3HgcmMsgSetU32(&Msg, 1, (UINT32)rcErr);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -571,38 +481,38 @@ static int vboxDnDGhSendMeta(HANDLE hDevice, UINT32 idClient, const char *pszMet
 {
     DWORD cbMetaFmt = pszMetaFmt ? lstrlen(pszMetaFmt) + 1 : 0;
     DWORD cbSent = 0;
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_DATA_HDR, 12, VBOXDND_CALL_TIMEOUT_MS, cbMetaFmt))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_DATA_HDR, 12, VBOXDND_CALL_TIMEOUT_MS, cbMetaFmt))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);                                                           /* uContext */
-    vboxDnDMsgSetU32(&Msg, 1, 0);                                                           /* uFlags */
-    vboxDnDMsgSetU32(&Msg, 2, 0);                                                           /* uScreenId */
-    vboxDnDMsgSetU64(&Msg, 3, cbTotal);                                                     /* cbTotal */
-    vboxDnDMsgSetU32(&Msg, 4, cbMeta);                                                      /* cbMeta */
-    vboxDnDMsgSetBuf(&Msg, 5, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbMetaFmt, pszMetaFmt);      /* pvMetaFmt */
-    vboxDnDMsgSetU32(&Msg, 6, cbMetaFmt);                                                   /* cbMetaFmt */
-    vboxDnDMsgSetU64(&Msg, 7, cObjects);                                                    /* cObjects */
-    vboxDnDMsgSetU32(&Msg, 8, 0);                                                           /* enmCompression */
-    vboxDnDMsgSetU32(&Msg, 9, 0);                                                           /* enmChecksumType */
-    vboxDnDMsgSetBuf(&Msg, 10, VBOXGUEST98_HGCM_PARM_BUFFER_IN, 0, NULL);                   /* pvChecksum */
-    vboxDnDMsgSetU32(&Msg, 11, 0);                                                          /* cbChecksum */
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                           /* uContext */
+    VbglR3HgcmMsgSetU32(&Msg, 1, 0);                                                           /* uFlags */
+    VbglR3HgcmMsgSetU32(&Msg, 2, 0);                                                           /* uScreenId */
+    VbglR3HgcmMsgSetU64(&Msg, 3, cbTotal);                                                     /* cbTotal */
+    VbglR3HgcmMsgSetU32(&Msg, 4, cbMeta);                                                      /* cbMeta */
+    VbglR3HgcmMsgSetBuf(&Msg, 5, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbMetaFmt, pszMetaFmt);      /* pvMetaFmt */
+    VbglR3HgcmMsgSetU32(&Msg, 6, cbMetaFmt);                                                   /* cbMetaFmt */
+    VbglR3HgcmMsgSetU64(&Msg, 7, cObjects);                                                    /* cObjects */
+    VbglR3HgcmMsgSetU32(&Msg, 8, 0);                                                           /* enmCompression */
+    VbglR3HgcmMsgSetU32(&Msg, 9, 0);                                                           /* enmChecksumType */
+    VbglR3HgcmMsgSetBuf(&Msg, 10, VBOXGUEST98_HGCM_PARM_BUFFER_IN, 0, NULL);                   /* pvChecksum */
+    VbglR3HgcmMsgSetU32(&Msg, 11, 0);                                                          /* cbChecksum */
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
 
     while (RT_SUCCESS(rc) && cbSent < cbMeta)
     {
         DWORD cbChunk = cbMeta - cbSent < VBOX_DND_CHUNK_SIZE ? cbMeta - cbSent : VBOX_DND_CHUNK_SIZE;
-        if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_DATA, 5, VBOXDND_CALL_TIMEOUT_MS, cbChunk))
+        if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_DATA, 5, VBOXDND_CALL_TIMEOUT_MS, cbChunk))
             return VERR_NO_MEMORY;
-        vboxDnDMsgSetU32(&Msg, 0, 0);                                                               /* uContext */
-        vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbChunk, (const BYTE *)pvMeta + cbSent); /* pvData */
-        vboxDnDMsgSetU32(&Msg, 2, cbChunk);                                                         /* cbData */
-        vboxDnDMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, 0, NULL);                        /* pvChecksum */
-        vboxDnDMsgSetU32(&Msg, 4, 0);                                                               /* cbChecksum */
-        rc = vboxDnDMsgCall(hDevice, &Msg);
-        vboxDnDMsgFree(&Msg);
+        VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                               /* uContext */
+        VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbChunk, (const BYTE *)pvMeta + cbSent); /* pvData */
+        VbglR3HgcmMsgSetU32(&Msg, 2, cbChunk);                                                         /* cbData */
+        VbglR3HgcmMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, 0, NULL);                        /* pvChecksum */
+        VbglR3HgcmMsgSetU32(&Msg, 4, 0);                                                               /* cbChecksum */
+        rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+        VbglR3HgcmMsgFree(&Msg);
         cbSent += cbChunk;
     }
     return rc;
@@ -616,17 +526,17 @@ static int vboxDnDGhSendMeta(HANDLE hDevice, UINT32 idClient, const char *pszMet
 static int vboxDnDGhSendDir(HANDLE hDevice, UINT32 idClient, const char *pszRel)
 {
     DWORD cbRel = lstrlen(pszRel) + 1;
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_DIR, 4, VBOXDND_CALL_TIMEOUT_MS, cbRel))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_DIR, 4, VBOXDND_CALL_TIMEOUT_MS, cbRel))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);                                                   /* uContext */
-    vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbRel, pszRel);      /* pvName */
-    vboxDnDMsgSetU32(&Msg, 2, cbRel);                                               /* cbName */
-    vboxDnDMsgSetU32(&Msg, 3, VBOX_DND_MODE_DIR);                                   /* fMode */
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                   /* uContext */
+    VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbRel, pszRel);      /* pvName */
+    VbglR3HgcmMsgSetU32(&Msg, 2, cbRel);                                               /* cbName */
+    VbglR3HgcmMsgSetU32(&Msg, 3, VBOX_DND_MODE_DIR);                                   /* fMode */
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
     return rc;
 }
 
@@ -641,7 +551,7 @@ static int vboxDnDGhSendFile(HANDLE hDevice, UINT32 idClient, const char *pszAbs
 {
     DWORD cbRel = lstrlen(pszRel) + 1;
     UINT64 cbLeft = cbFile;
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     HANDLE hFile;
     int rc;
 
@@ -649,19 +559,19 @@ static int vboxDnDGhSendFile(HANDLE hDevice, UINT32 idClient, const char *pszAbs
     if (hFile == INVALID_HANDLE_VALUE)
         return VERR_OPEN_FAILED;
 
-    if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_FILE_HDR, 6, VBOXDND_CALL_TIMEOUT_MS, cbRel))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_FILE_HDR, 6, VBOXDND_CALL_TIMEOUT_MS, cbRel))
     {
         CloseHandle(hFile);
         return VERR_NO_MEMORY;
     }
-    vboxDnDMsgSetU32(&Msg, 0, 0);                                                   /* uContext */
-    vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbRel, pszRel);      /* pvName */
-    vboxDnDMsgSetU32(&Msg, 2, cbRel);                                               /* cbName */
-    vboxDnDMsgSetU32(&Msg, 3, 0);                                                   /* uFlags */
-    vboxDnDMsgSetU32(&Msg, 4, VBOX_DND_MODE_FILE);                                  /* fMode */
-    vboxDnDMsgSetU64(&Msg, 5, cbFile);                                              /* cbTotal */
-    rc = vboxDnDMsgCall(hDevice, &Msg);
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                   /* uContext */
+    VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbRel, pszRel);      /* pvName */
+    VbglR3HgcmMsgSetU32(&Msg, 2, cbRel);                                               /* cbName */
+    VbglR3HgcmMsgSetU32(&Msg, 3, 0);                                                   /* uFlags */
+    VbglR3HgcmMsgSetU32(&Msg, 4, VBOX_DND_MODE_FILE);                                  /* fMode */
+    VbglR3HgcmMsgSetU64(&Msg, 5, cbFile);                                              /* cbTotal */
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
 
     while (RT_SUCCESS(rc) && cbLeft)
     {
@@ -669,21 +579,21 @@ static int vboxDnDGhSendFile(HANDLE hDevice, UINT32 idClient, const char *pszAbs
         DWORD cbRead = 0;
         BYTE *pb;
 
-        if (!vboxDnDMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_FILE_DATA, 5, VBOXDND_CALL_TIMEOUT_MS, cbChunk))
+        if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_GH_SND_FILE_DATA, 5, VBOXDND_CALL_TIMEOUT_MS, cbChunk))
         {
             rc = VERR_NO_MEMORY;
             break;
         }
-        vboxDnDMsgSetU32(&Msg, 0, 0);                                                       /* uContext */
-        pb = vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbChunk, NULL);     /* pvData */
-        vboxDnDMsgSetU32(&Msg, 2, cbChunk);                                                 /* cbData */
-        vboxDnDMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, 0, NULL);                /* pvChecksum */
-        vboxDnDMsgSetU32(&Msg, 4, 0);                                                       /* cbChecksum */
+        VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                       /* uContext */
+        pb = VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cbChunk, NULL);     /* pvData */
+        VbglR3HgcmMsgSetU32(&Msg, 2, cbChunk);                                                 /* cbData */
+        VbglR3HgcmMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_IN, 0, NULL);                /* pvChecksum */
+        VbglR3HgcmMsgSetU32(&Msg, 4, 0);                                                       /* cbChecksum */
         if (!ReadFile(hFile, pb, cbChunk, &cbRead, NULL) || cbRead != cbChunk)
             rc = VERR_READ_ERROR; /* The file changed size since we looked: the host counts on the announced size. */
         else
-            rc = vboxDnDMsgCall(hDevice, &Msg);
-        vboxDnDMsgFree(&Msg);
+            rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+        VbglR3HgcmMsgFree(&Msg);
         cbLeft -= cbChunk;
     }
 
@@ -1098,7 +1008,7 @@ static int vboxDnDRecvUriData(HANDLE hDevice, UINT32 idClient, const char *pszDr
     HANDLE hFile = INVALID_HANDLE_VALUE;
     UINT64 cbFileSize = 0;
     UINT64 cbFileWritten = 0;
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     int rc = VINF_SUCCESS;
 
     *pcFiles = 0;
@@ -1115,19 +1025,19 @@ static int vboxDnDRecvUriData(HANDLE hDevice, UINT32 idClient, const char *pszDr
 
         if (uMsg == HOST_DND_FN_HG_SND_DIR)
         {
-            if (!vboxDnDMsgInit(&Msg, idClient, uMsg, 4, VBOXDND_CALL_TIMEOUT_MS, MAX_PATH * 4))
+            if (!VbglR3HgcmMsgInit(&Msg, idClient, uMsg, 4, VBOXDND_CALL_TIMEOUT_MS, MAX_PATH * 4))
             {
                 rc = VERR_NO_MEMORY;
                 break;
             }
-            vboxDnDMsgSetU32(&Msg, 0, 0);                                                       /* uContext */
-            pb = vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, MAX_PATH * 4, NULL); /* pvName */
-            vboxDnDMsgSetU32(&Msg, 2, MAX_PATH * 4);                                            /* cbName */
-            vboxDnDMsgSetU32(&Msg, 3, 0);                                                       /* fMode */
-            rc = vboxDnDMsgCall(hDevice, &Msg);
+            VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                       /* uContext */
+            pb = VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, MAX_PATH * 4, NULL); /* pvName */
+            VbglR3HgcmMsgSetU32(&Msg, 2, MAX_PATH * 4);                                            /* cbName */
+            VbglR3HgcmMsgSetU32(&Msg, 3, 0);                                                       /* fMode */
+            rc = VbglR3HgcmMsgCall(hDevice, &Msg);
             if (RT_SUCCESS(rc))
             {
-                cb = vboxDnDMsgGetBufSize(&Msg, 1);
+                cb = VbglR3HgcmMsgGetBufSize(&Msg, 1);
                 if (cb > MAX_PATH * 4)
                     rc = VERR_TOO_MUCH_DATA;
                 else
@@ -1137,7 +1047,7 @@ static int vboxDnDRecvUriData(HANDLE hDevice, UINT32 idClient, const char *pszDr
                 if (RT_SUCCESS(rc) && cObjects)
                     cObjects--;
             }
-            vboxDnDMsgFree(&Msg);
+            VbglR3HgcmMsgFree(&Msg);
         }
         else if (uMsg == HOST_DND_FN_HG_SND_FILE_HDR)
         {
@@ -1146,22 +1056,22 @@ static int vboxDnDRecvUriData(HANDLE hDevice, UINT32 idClient, const char *pszDr
                 rc = VERR_WRONG_ORDER; /* The previous file isn't complete. */
                 break;
             }
-            if (!vboxDnDMsgInit(&Msg, idClient, uMsg, 6, VBOXDND_CALL_TIMEOUT_MS, MAX_PATH * 4))
+            if (!VbglR3HgcmMsgInit(&Msg, idClient, uMsg, 6, VBOXDND_CALL_TIMEOUT_MS, MAX_PATH * 4))
             {
                 rc = VERR_NO_MEMORY;
                 break;
             }
-            vboxDnDMsgSetU32(&Msg, 0, 0);                                                       /* uContext */
-            pb = vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, MAX_PATH * 4, NULL); /* pvName */
-            vboxDnDMsgSetU32(&Msg, 2, MAX_PATH * 4);                                            /* cbName */
-            vboxDnDMsgSetU32(&Msg, 3, 0);                                                       /* uFlags */
-            vboxDnDMsgSetU32(&Msg, 4, 0);                                                       /* fMode */
-            vboxDnDMsgSetU64(&Msg, 5, 0);                                                       /* cbTotal */
-            rc = vboxDnDMsgCall(hDevice, &Msg);
+            VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                       /* uContext */
+            pb = VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, MAX_PATH * 4, NULL); /* pvName */
+            VbglR3HgcmMsgSetU32(&Msg, 2, MAX_PATH * 4);                                            /* cbName */
+            VbglR3HgcmMsgSetU32(&Msg, 3, 0);                                                       /* uFlags */
+            VbglR3HgcmMsgSetU32(&Msg, 4, 0);                                                       /* fMode */
+            VbglR3HgcmMsgSetU64(&Msg, 5, 0);                                                       /* cbTotal */
+            rc = VbglR3HgcmMsgCall(hDevice, &Msg);
             if (RT_SUCCESS(rc))
             {
-                cb = vboxDnDMsgGetBufSize(&Msg, 1);
-                cbFileSize = vboxDnDMsgGetU64(&Msg, 5);
+                cb = VbglR3HgcmMsgGetBufSize(&Msg, 1);
+                cbFileSize = VbglR3HgcmMsgGetU64(&Msg, 5);
                 cbFileWritten = 0;
                 if (cb > MAX_PATH * 4 || cbFileSize > cbToRecv)
                     rc = VERR_TOO_MUCH_DATA;
@@ -1176,7 +1086,7 @@ static int vboxDnDRecvUriData(HANDLE hDevice, UINT32 idClient, const char *pszDr
                         (*pcFiles)++;
                 }
             }
-            vboxDnDMsgFree(&Msg);
+            VbglR3HgcmMsgFree(&Msg);
         }
         else if (uMsg == HOST_DND_FN_HG_SND_FILE_DATA)
         {
@@ -1185,21 +1095,21 @@ static int vboxDnDRecvUriData(HANDLE hDevice, UINT32 idClient, const char *pszDr
                 rc = VERR_WRONG_ORDER;
                 break;
             }
-            if (!vboxDnDMsgInit(&Msg, idClient, uMsg, 5, VBOXDND_CALL_TIMEOUT_MS, VBOX_DND_CHUNK_SIZE))
+            if (!VbglR3HgcmMsgInit(&Msg, idClient, uMsg, 5, VBOXDND_CALL_TIMEOUT_MS, VBOX_DND_CHUNK_SIZE))
             {
                 rc = VERR_NO_MEMORY;
                 break;
             }
-            vboxDnDMsgSetU32(&Msg, 0, 0);                                                           /* uContext */
-            pb = vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, VBOX_DND_CHUNK_SIZE, NULL); /* pvData */
-            vboxDnDMsgSetU32(&Msg, 2, 0);                                                           /* cbData */
-            vboxDnDMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, 0, NULL);                   /* pvChecksum */
-            vboxDnDMsgSetU32(&Msg, 4, 0);                                                           /* cbChecksum */
-            rc = vboxDnDMsgCall(hDevice, &Msg);
+            VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                           /* uContext */
+            pb = VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, VBOX_DND_CHUNK_SIZE, NULL); /* pvData */
+            VbglR3HgcmMsgSetU32(&Msg, 2, 0);                                                           /* cbData */
+            VbglR3HgcmMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, 0, NULL);                   /* pvChecksum */
+            VbglR3HgcmMsgSetU32(&Msg, 4, 0);                                                           /* cbChecksum */
+            rc = VbglR3HgcmMsgCall(hDevice, &Msg);
             if (RT_SUCCESS(rc))
             {
                 DWORD cbWritten = 0;
-                cb = vboxDnDMsgGetU32(&Msg, 2);
+                cb = VbglR3HgcmMsgGetU32(&Msg, 2);
                 if (cb > VBOX_DND_CHUNK_SIZE || cb > cbFileSize - cbFileWritten)
                     rc = VERR_TOO_MUCH_DATA;
                 else if (cb && (!WriteFile(hFile, pb, cb, &cbWritten, NULL) || cbWritten != cb))
@@ -1210,7 +1120,7 @@ static int vboxDnDRecvUriData(HANDLE hDevice, UINT32 idClient, const char *pszDr
                     cbToRecv      -= cb;
                 }
             }
-            vboxDnDMsgFree(&Msg);
+            VbglR3HgcmMsgFree(&Msg);
         }
         else if (uMsg == HOST_DND_FN_CANCEL)
         {
@@ -1256,33 +1166,33 @@ static int vboxDnDRecvData(HANDLE hDevice, UINT32 idClient)
     UINT32 cbMeta;
     UINT32 cbMetaRecv = 0;
     UINT32 cFiles = 0;
-    VBOXDNDMSG Msg;
+    VBGLR3HGCMMSG Msg;
     BYTE *pb;
     int rc;
 
     /*
      * The header.
      */
-    if (!vboxDnDMsgInit(&Msg, idClient, HOST_DND_FN_HG_SND_DATA_HDR, 12, VBOXDND_CALL_TIMEOUT_MS, VBOX_DND_CHUNK_SIZE))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, HOST_DND_FN_HG_SND_DATA_HDR, 12, VBOXDND_CALL_TIMEOUT_MS, VBOX_DND_CHUNK_SIZE))
         return VERR_NO_MEMORY;
-    vboxDnDMsgSetU32(&Msg, 0, 0);                                                           /* uContext */
-    vboxDnDMsgSetU32(&Msg, 1, 0);                                                           /* uFlags */
-    vboxDnDMsgSetU32(&Msg, 2, 0);                                                           /* uScreenId */
-    vboxDnDMsgSetU64(&Msg, 3, 0);                                                           /* cbTotal */
-    vboxDnDMsgSetU32(&Msg, 4, 0);                                                           /* cbMeta */
-    pb = vboxDnDMsgSetBuf(&Msg, 5, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, VBOX_DND_CHUNK_SIZE, NULL); /* pvMetaFmt */
-    vboxDnDMsgSetU32(&Msg, 6, 0);                                                           /* cbMetaFmt */
-    vboxDnDMsgSetU64(&Msg, 7, 0);                                                           /* cObjects */
-    vboxDnDMsgSetU32(&Msg, 8, 0);                                                           /* enmCompression */
-    vboxDnDMsgSetU32(&Msg, 9, 0);                                                           /* enmChecksumType */
-    vboxDnDMsgSetBuf(&Msg, 10, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, 0, NULL);                  /* pvChecksum */
-    vboxDnDMsgSetU32(&Msg, 11, 0);                                                          /* cbChecksum */
-    rc = vboxDnDMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                           /* uContext */
+    VbglR3HgcmMsgSetU32(&Msg, 1, 0);                                                           /* uFlags */
+    VbglR3HgcmMsgSetU32(&Msg, 2, 0);                                                           /* uScreenId */
+    VbglR3HgcmMsgSetU64(&Msg, 3, 0);                                                           /* cbTotal */
+    VbglR3HgcmMsgSetU32(&Msg, 4, 0);                                                           /* cbMeta */
+    pb = VbglR3HgcmMsgSetBuf(&Msg, 5, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, VBOX_DND_CHUNK_SIZE, NULL); /* pvMetaFmt */
+    VbglR3HgcmMsgSetU32(&Msg, 6, 0);                                                           /* cbMetaFmt */
+    VbglR3HgcmMsgSetU64(&Msg, 7, 0);                                                           /* cObjects */
+    VbglR3HgcmMsgSetU32(&Msg, 8, 0);                                                           /* enmCompression */
+    VbglR3HgcmMsgSetU32(&Msg, 9, 0);                                                           /* enmChecksumType */
+    VbglR3HgcmMsgSetBuf(&Msg, 10, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, 0, NULL);                  /* pvChecksum */
+    VbglR3HgcmMsgSetU32(&Msg, 11, 0);                                                          /* cbChecksum */
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
     if (RT_SUCCESS(rc))
     {
-        cbTotal  = vboxDnDMsgGetU64(&Msg, 3);
-        cbMeta   = vboxDnDMsgGetU32(&Msg, 4);
-        cObjects = vboxDnDMsgGetU64(&Msg, 7);
+        cbTotal  = VbglR3HgcmMsgGetU64(&Msg, 3);
+        cbMeta   = VbglR3HgcmMsgGetU32(&Msg, 4);
+        cObjects = VbglR3HgcmMsgGetU64(&Msg, 7);
         pb[VBOX_DND_CHUNK_SIZE - 1] = '\0';
         pszMetaFmt = _strdup((const char *)pb);
         if (!pszMetaFmt)
@@ -1290,7 +1200,7 @@ static int vboxDnDRecvData(HANDLE hDevice, UINT32 idClient)
         else if (cbMeta > VBOXDND_MAX_META_SIZE || cbMeta > cbTotal)
             rc = VERR_TOO_MUCH_DATA;
     }
-    vboxDnDMsgFree(&Msg);
+    VbglR3HgcmMsgFree(&Msg);
 
     /*
      * The meta data: the text, or the URI list of the transfer roots.
@@ -1306,20 +1216,20 @@ static int vboxDnDRecvData(HANDLE hDevice, UINT32 idClient)
         DWORD cbChunk = cbMeta - cbMetaRecv < VBOX_DND_CHUNK_SIZE ? cbMeta - cbMetaRecv : VBOX_DND_CHUNK_SIZE;
         DWORD cbGot;
 
-        if (!vboxDnDMsgInit(&Msg, idClient, HOST_DND_FN_HG_SND_DATA, 5, VBOXDND_CALL_TIMEOUT_MS, cbChunk))
+        if (!VbglR3HgcmMsgInit(&Msg, idClient, HOST_DND_FN_HG_SND_DATA, 5, VBOXDND_CALL_TIMEOUT_MS, cbChunk))
         {
             rc = VERR_NO_MEMORY;
             break;
         }
-        vboxDnDMsgSetU32(&Msg, 0, 0);                                                       /* uContext */
-        pb = vboxDnDMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, cbChunk, NULL);    /* pvData */
-        vboxDnDMsgSetU32(&Msg, 2, 0);                                                       /* cbData */
-        vboxDnDMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, 0, NULL);               /* pvChecksum */
-        vboxDnDMsgSetU32(&Msg, 4, 0);                                                       /* cbChecksum */
-        rc = vboxDnDMsgCall(hDevice, &Msg);
+        VbglR3HgcmMsgSetU32(&Msg, 0, 0);                                                       /* uContext */
+        pb = VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, cbChunk, NULL);    /* pvData */
+        VbglR3HgcmMsgSetU32(&Msg, 2, 0);                                                       /* cbData */
+        VbglR3HgcmMsgSetBuf(&Msg, 3, VBOXGUEST98_HGCM_PARM_BUFFER_OUT, 0, NULL);               /* pvChecksum */
+        VbglR3HgcmMsgSetU32(&Msg, 4, 0);                                                       /* cbChecksum */
+        rc = VbglR3HgcmMsgCall(hDevice, &Msg);
         if (RT_SUCCESS(rc))
         {
-            cbGot = vboxDnDMsgGetU32(&Msg, 2);
+            cbGot = VbglR3HgcmMsgGetU32(&Msg, 2);
             if (!cbGot || cbGot > cbChunk)
                 rc = VERR_TOO_MUCH_DATA;
             else
@@ -1328,7 +1238,7 @@ static int vboxDnDRecvData(HANDLE hDevice, UINT32 idClient)
                 cbMetaRecv += cbGot;
             }
         }
-        vboxDnDMsgFree(&Msg);
+        VbglR3HgcmMsgFree(&Msg);
     }
     if (pbMeta)
         pbMeta[cbMetaRecv] = '\0';

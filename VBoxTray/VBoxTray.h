@@ -38,6 +38,26 @@ int    VbglR3ReportFacilityStatus(HANDLE hDevice, VBoxGuestFacilityType enmFacil
 int    VbglR3HgcmConnect(HANDLE hDevice, const char *pszService, UINT32 *pidClient);
 int    VbglR3HgcmDisconnect(HANDLE hDevice, UINT32 idClient);
 int    VbglR3HgcmCall(HANDLE hDevice, VBOXGUEST98HGCMCALL *pCall, DWORD cbCall);
+
+/** HGCM call being built: header, parameters, then the buffers. */
+typedef struct VBGLR3HGCMMSG
+{
+    VBOXGUEST98HGCMCALL *pCall;
+    DWORD                cbCall;
+    /** Offset of the next unused data byte. */
+    DWORD                offNext;
+} VBGLR3HGCMMSG;
+
+BOOL   VbglR3HgcmMsgInit(VBGLR3HGCMMSG *pMsg, UINT32 idClient, UINT32 uFunction, UINT32 cParms, UINT32 cMsTimeout,
+                         DWORD cbData);
+void   VbglR3HgcmMsgSetU32(VBGLR3HGCMMSG *pMsg, UINT32 iParm, UINT32 u32);
+void   VbglR3HgcmMsgSetU64(VBGLR3HGCMMSG *pMsg, UINT32 iParm, UINT64 u64);
+BYTE  *VbglR3HgcmMsgSetBuf(VBGLR3HGCMMSG *pMsg, UINT32 iParm, UINT32 enmType, DWORD cb, const void *pvIn);
+UINT32 VbglR3HgcmMsgGetU32(VBGLR3HGCMMSG *pMsg, UINT32 iParm);
+UINT64 VbglR3HgcmMsgGetU64(VBGLR3HGCMMSG *pMsg, UINT32 iParm);
+UINT32 VbglR3HgcmMsgGetBufSize(VBGLR3HGCMMSG *pMsg, UINT32 iParm);
+int    VbglR3HgcmMsgCall(HANDLE hDevice, VBGLR3HGCMMSG *pMsg);
+void   VbglR3HgcmMsgFree(VBGLR3HGCMMSG *pMsg);
 int    VbglR3StatQueryInterval(HANDLE hDevice, DWORD *pcMsInterval);
 int    VbglR3StatReport(HANDLE hDevice, const VBoxGuestStatistics *pStats);
 int    VbglR3ChangeGuestCapabilities(HANDLE hDevice, UINT32 fOrMask, UINT32 fNotMask);

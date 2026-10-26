@@ -297,6 +297,89 @@ int VbglR3HgcmCall(HANDLE hDevice, VBOXGUEST98HGCMCALL *pCall, DWORD cbCall)
 }
 
 /**
+ * Starts an HGCM call with cParms parameters and cbData bytes of buffers.
+ *
+ * @returns FALSE if out of memory.
+ */
+BOOL VbglR3HgcmMsgInit(VBGLR3HGCMMSG *pMsg, UINT32 idClient, UINT32 uFunction, UINT32 cParms, UINT32 cMsTimeout,
+                       DWORD cbData)
+{
+    DWORD offData = sizeof(VBOXGUEST98HGCMCALL) + cParms * sizeof(VBOXGUEST98HGCMPARM);
+
+    pMsg->cbCall  = offData + cbData;
+    pMsg->offNext = offData;
+    pMsg->pCall   = (VBOXGUEST98HGCMCALL *)calloc(1, pMsg->cbCall);
+    if (!pMsg->pCall)
+        return FALSE;
+    pMsg->pCall->u32ClientID = idClient;
+    pMsg->pCall->u32Function = uFunction;
+    pMsg->pCall->cMsTimeout  = cMsTimeout;
+    pMsg->pCall->cParms      = cParms;
+    return TRUE;
+}
+
+void VbglR3HgcmMsgSetU32(VBGLR3HGCMMSG *pMsg, UINT32 iParm, UINT32 u32)
+{
+    VBOXGUEST98HGCMPARM *pParm = &VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm];
+    pParm->enmType  = VBOXGUEST98_HGCM_PARM_32BIT;
+    pParm->u64Value = u32;
+}
+
+void VbglR3HgcmMsgSetU64(VBGLR3HGCMMSG *pMsg, UINT32 iParm, UINT64 u64)
+{
+    VBOXGUEST98HGCMPARM *pParm = &VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm];
+    pParm->enmType  = VBOXGUEST98_HGCM_PARM_64BIT;
+    pParm->u64Value = u64;
+}
+
+/**
+ * Sets a buffer parameter, placing the buffer in the call's data area.
+ *
+ * @returns The buffer in the call.
+ * @param   pvIn    Data to copy in (NULL for output buffers).
+ */
+BYTE *VbglR3HgcmMsgSetBuf(VBGLR3HGCMMSG *pMsg, UINT32 iParm, UINT32 enmType, DWORD cb, const void *pvIn)
+{
+    VBOXGUEST98HGCMPARM *pParm = &VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm];
+    BYTE *pb = (BYTE *)pMsg->pCall + pMsg->offNext;
+
+    pParm->enmType = enmType;
+    pParm->cb      = cb;
+    pParm->off     = pMsg->offNext;
+    if (pvIn && cb)
+        memcpy(pb, pvIn, cb);
+    pMsg->offNext += cb;
+    return pb;
+}
+
+UINT32 VbglR3HgcmMsgGetU32(VBGLR3HGCMMSG *pMsg, UINT32 iParm)
+{
+    return (UINT32)VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm].u64Value;
+}
+
+UINT64 VbglR3HgcmMsgGetU64(VBGLR3HGCMMSG *pMsg, UINT32 iParm)
+{
+    return VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm].u64Value;
+}
+
+/** Returns the size the host put in a buffer parameter. */
+UINT32 VbglR3HgcmMsgGetBufSize(VBGLR3HGCMMSG *pMsg, UINT32 iParm)
+{
+    return VBOXGUEST98_HGCM_CALL_PARMS(pMsg->pCall)[iParm].cb;
+}
+
+int VbglR3HgcmMsgCall(HANDLE hDevice, VBGLR3HGCMMSG *pMsg)
+{
+    return VbglR3HgcmCall(hDevice, pMsg->pCall, pMsg->cbCall);
+}
+
+void VbglR3HgcmMsgFree(VBGLR3HGCMMSG *pMsg)
+{
+    free(pMsg->pCall);
+    pMsg->pCall = NULL;
+}
+
+/**
  * Queries the statistics reporting interval wanted by the host, acknowledging
  * VMMDEV_EVENT_STATISTICS_INTERVAL_CHANGE_REQUEST (as upstream VbglR3StatQueryInterval).
  *
