@@ -33,7 +33,7 @@ HKR,,NTMPDriver,,VBoxGst.sys
 HKR,,PowerOffOnShutdown,1,00,00,00,00
 
 [VBoxTray_AddReg]
-; Starts VBoxTray (mouse integration, time sync) at logon.
+; Starts VBoxTray at logon.
 HKLM,"Software\Microsoft\Windows\CurrentVersion\Run",VBoxTray,,"%11%\VBoxTray.exe"
 
 [ControlFlags]
@@ -49,6 +49,6 @@ VBoxGst.sys=1
 VBoxTray.exe=1
 
 [Strings]
-String0="Oracle Corporation"
+String0="VBoxGuest98"
 String1="VirtualBox Guest Device"
 VBoxGuest.MediaDesc="VirtualBox Guest Driver Installation Disk"

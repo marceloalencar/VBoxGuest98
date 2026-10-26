@@ -15,6 +15,9 @@ SOURCES= \
         Display.c \
         DnD.c \
         DnDObj.c \
+        DnDHgcm.c \
+        DnDTransfer.c \
+        DnDUtil.c \
         VbglR3.c \
         VBoxTray.rc
 

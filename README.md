@@ -13,7 +13,7 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 - Drag and drop between the host and the guest
 - Reports the VBoxTrayClient facility status to the host
 - Logs start/stop, setup failures, clock adjustments, display mode changes
-  and the statistics interval to the release log (see below)
+  and the statistics interval to the VM's `VBox.log`
 
 ## Recommended: SoftGPU
 Windows 98 has no driver for the VirtualBox graphics adapters and falls back
@@ -41,9 +41,12 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/Clipboard.c` | Shared clipboard (text, images, HTML) |
 | `VBoxTray/Stats.c` | Guest statistics |
 | `VBoxTray/Display.c` | Display resizing |
-| `VBoxTray/DnD.c` | Drag and drop: HGCM protocol, receiving and sending files, proxy window |
+| `VBoxTray/DnD.c` | Drag and drop: proxy window and worker thread |
+| `VBoxTray/DnDHgcm.c` | Drag and drop HGCM protocol calls |
+| `VBoxTray/DnDTransfer.c` | Drag and drop transfers: receiving and sending files and text |
+| `VBoxTray/DnDUtil.c` | Drag and drop text conversions, paths, CF_HDROP and CF_TEXT data |
 | `VBoxTray/DnDObj.c` | Drag and drop OLE objects (data object, drop source, drop target) in C |
-| `VBoxTray/VbglR3.c` | Driver access helpers for user mode |
+| `VBoxTray/VbglR3.c` | Driver access helpers for user mode, HGCM call builder |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 
 # Todo:

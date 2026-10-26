@@ -5,10 +5,12 @@
  *  - VBoxTray.c   WinMain, hidden window, tray icon, service threads.
  *  - Mouse.c      Mouse pointer integration (absolute positioning).
  *  - TimeSync.c   Guest clock synchronization with the host.
- *  - Clipboard.c  Shared clipboard (text).
+ *  - Clipboard.c  Shared clipboard (text, images, HTML).
  *  - Stats.c      Guest statistics (memory, processes, CPU load).
  *  - Display.c    Resizing the guest display to the host window.
- *  - DnD.c        Drag and drop from the host (DnDObj.c: its OLE objects).
+ *  - DnD.c        Drag and drop between the host and the guest (DnDHgcm.c:
+ *                 its HGCM calls, DnDTransfer.c: transfers, DnDUtil.c: text
+ *                 conversions, DnDObj.c: OLE objects).
  *  - VbglR3.c     Access to the VBoxGst driver (VBoxGuest98.h interface).
  */
 
