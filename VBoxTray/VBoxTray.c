@@ -118,7 +118,7 @@ static void vboxTrayIcon(HWND hwnd, DWORD dwMessage)
     Nid.uFlags           = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     Nid.uCallbackMessage = WM_VBOXTRAY_NOTIFYICON;
     Nid.hIcon            = g_hIconSmall;
-    lstrcpyn(Nid.szTip, "VirtualBox Guest Additions " VBOX_VERSION_STRING, 64);
+    lstrcpyn(Nid.szTip, "VBoxGuest98 " VBOXGUEST98_VERSION_STRING, 64);
     Shell_NotifyIcon(dwMessage, &Nid);
 }
 
@@ -285,7 +285,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
     }
     /* Keep this one open for logging. */
     g_hVBoxTrayLog = hDevice;
-    VBoxTrayLogRel("VBoxTray %s r%u started\n", VBOX_VERSION_STRING, VBOX_SVN_REV);
+    VBoxTrayLogRel("VBoxTray %s (VirtualBox %s r%u) started\n", VBOXGUEST98_VERSION_STRING,
+                   VBOX_VERSION_STRING, VBOX_SVN_REV);
 
     g_uMsgTaskbarCreated = RegisterWindowMessage("TaskbarCreated");
 

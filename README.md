@@ -48,6 +48,7 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/DnDObj.c` | Drag and drop OLE objects (data object, drop source, drop target) in C |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode, HGCM call builder |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
+| `installer/VBoxGuest98.nsi` | Installer and uninstaller (NSIS 2.46) |
 
 # Todo:
 
@@ -60,7 +61,9 @@ Microsoft Visual C++ 6.0
 
 Microsoft Windows 2000 DDK
 
+[NSIS 2.46](https://sourceforge.net/projects/nsis/files/NSIS%202/2.46/) (optional)
+
 Run `build.cmd` (free build) or `build.cmd checked` in this folder. It expects
-Visual C++ in `C:\MSVC600` and the DDK in `C:\NTDDK`; set `MSVC6DIR` and
-`DDKDIR` to use other locations. Alternatively run `build -cZ` in the
-Free Build Environment.
+Visual C++ in `C:\MSVC600`, the DDK in `C:\NTDDK` and NSIS in `C:\NSIS246`;
+set `MSVC6DIR`, `DDKDIR` and `NSIS2DIR` to use other locations. Alternatively run `build -cZ`
+in the Free Build Environment and `makensis installer\VBoxGuest98.nsi`.

@@ -14,8 +14,8 @@
 IDI_VBOXTRAY ICON "VBoxTray.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION    VBOX_VERSION_MAJOR, VBOX_VERSION_MINOR, VBOX_VERSION_BUILD, 0
- PRODUCTVERSION VBOX_VERSION_MAJOR, VBOX_VERSION_MINOR, VBOX_VERSION_BUILD, 0
+ FILEVERSION    VBOXGUEST98_VERSION_MAJOR, VBOXGUEST98_VERSION_MINOR, VBOXGUEST98_VERSION_PATCH, 0
+ PRODUCTVERSION VBOXGUEST98_VERSION_MAJOR, VBOXGUEST98_VERSION_MINOR, VBOXGUEST98_VERSION_PATCH, 0
  FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
  FILEFLAGS      0
  FILEOS         VOS__WINDOWS32
@@ -28,11 +28,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "VBoxGuest98\0"
             VALUE "FileDescription",  "VirtualBox Guest Additions Tray Application\0"
-            VALUE "FileVersion",      VBOX_VERSION_STRING "\0"
+            VALUE "FileVersion",      VBOXGUEST98_VERSION_STRING "\0"
             VALUE "InternalName",     "VBoxTray\0"
             VALUE "OriginalFilename", "VBoxTray.exe\0"
             VALUE "ProductName",      "VirtualBox Guest Additions for Windows 98\0"
-            VALUE "ProductVersion",   VBOX_VERSION_STRING "\0"
+            VALUE "ProductVersion",   VBOXGUEST98_VERSION_STRING "\0"
         END
     END
     BLOCK "VarFileInfo"

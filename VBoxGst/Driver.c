@@ -60,8 +60,8 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING pRegPath)
         VGDrvLogRel("not loading, Windows 2000 or newer needs the upstream driver\n");
         return STATUS_DRIVER_UNABLE_TO_LOAD;
     }
-    VGDrvLogRel("VBoxGuest98 %s r%u on Windows %s\n", VBOX_VERSION_STRING, VBOX_SVN_REV,
-                g_enmVGDrvOsType == VBOXOSTYPE_WINME ? "ME" : "98");
+    VGDrvLogRel("VBoxGuest98 %s (VirtualBox %s r%u) on Windows %s\n", VBOXGUEST98_VERSION_STRING,
+                VBOX_VERSION_STRING, VBOX_SVN_REV, g_enmVGDrvOsType == VBOXOSTYPE_WINME ? "ME" : "98");
 
     for (i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
         pDrvObj->MajorFunction[i] = vgdrvWinNotSupported;
