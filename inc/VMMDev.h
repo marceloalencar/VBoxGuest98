@@ -686,12 +686,32 @@ typedef struct
 
 
 /*********************************************************************************************************************************
-*   Guest property HGCM service (not used yet)                                                                                   *
+*   Guest property HGCM service (used by VBoxTray)                                                                               *
 *********************************************************************************************************************************/
 
 #define GUEST_PROP_SERVICE_NAME                         "VBoxGuestPropSvc"
+/** Maximum length of a property name, terminator included. */
+#define GUEST_PROP_MAX_NAME_LEN                         64
+/** Maximum length of a property value, terminator included. */
+#define GUEST_PROP_MAX_VALUE_LEN                        1024
+
+/** @name Guest functions.  Strings are UTF-8 and zero terminated.
+ * @{ */
+/** Reads a property.  Parms: [0] name (buffer in), [1] value, then the flags
+ *  (buffer out), [2] timestamp (64bit out), [3] size needed (32bit out).
+ *  VERR_BUFFER_OVERFLOW if the buffer is too small, VERR_NOT_FOUND if not set. */
 #define GUEST_PROP_FN_GET_PROP                          1
 #define GUEST_PROP_FN_GET_PROP_CPARMS                   4
+/** Sets a property.  Parms: [0] name, [1] value, [2] flags (buffers in). */
+#define GUEST_PROP_FN_SET_PROP                          2
+#define GUEST_PROP_FN_SET_PROP_CPARMS                   3
+/** Sets a property keeping its flags.  Parms: [0] name, [1] value (buffers in). */
+#define GUEST_PROP_FN_SET_PROP_VALUE                    3
+#define GUEST_PROP_FN_SET_PROP_VALUE_CPARMS             2
+/** Deletes a property.  Parms: [0] name (buffer in). */
+#define GUEST_PROP_FN_DEL_PROP                          4
+#define GUEST_PROP_FN_DEL_PROP_CPARMS                   1
+/** @} */
 
 
 /*********************************************************************************************************************************

@@ -18,6 +18,8 @@ SOURCES= \
         DnDHgcm.c \
         DnDTransfer.c \
         DnDUtil.c \
+        VMInfo.c \
+        GuestProp.c \
         VbglR3.c \
         VBoxTray.rc
 

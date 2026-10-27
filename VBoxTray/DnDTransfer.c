@@ -402,7 +402,7 @@ static int vboxDnDGhListAdd(VBOXDNDGHLIST *pList, const char *pszAbs, const char
 
     pObj = &pList->paObjs[pList->cObjs];
     pObj->pszAbs = _strdup(pszAbs);
-    pObj->pszRel = VBoxDnDAnsiToUtf8(pszRel);
+    pObj->pszRel = VBoxTrayAnsiToUtf8(pszRel);
     if (!pObj->pszAbs || !pObj->pszRel)
     {
         free(pObj->pszAbs);
@@ -487,7 +487,7 @@ static void vboxDnDGhListFree(VBOXDNDGHLIST *pList)
 static int vboxDnDGhMetaAddRoot(char **ppszMeta, DWORD *pcchMeta, const char *pszName)
 {
     static const char s_szHex[] = "0123456789ABCDEF";
-    char *pszUtf8 = VBoxDnDAnsiToUtf8(pszName);
+    char *pszUtf8 = VBoxTrayAnsiToUtf8(pszName);
     char *pszNew;
     BYTE *pb;
     DWORD off;

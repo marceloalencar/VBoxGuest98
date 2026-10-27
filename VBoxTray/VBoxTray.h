@@ -11,6 +11,8 @@
  *  - DnD.c        Drag and drop between the host and the guest (DnDHgcm.c:
  *                 its HGCM calls, DnDTransfer.c: transfers, DnDUtil.c: text
  *                 conversions, DnDObj.c: OLE objects).
+ *  - VMInfo.c     Guest properties with the OS, user and network information
+ *                 (GuestProp.c: the VBoxGuestPropSvc calls).
  *  - VbglR3.c     Access to the VBoxGst driver (VBoxGuest98.h interface).
  */
 
@@ -80,6 +82,8 @@ extern HWND g_hwndVBoxTray;
 /** Writes a formatted line (wsprintf format, ending with a newline) to the
  *  release log, prefixed with "VBoxTray: ".  Any thread may call it. */
 void __cdecl VBoxTrayLogRel(const char *pszFormat, ...);
+/** Converts ANSI code page text to zero terminated UTF-8 (malloc'ed), NULL on failure. */
+char *VBoxTrayAnsiToUtf8(const char *psz);
 
 unsigned __stdcall VBoxMouseThread(void *pvUser);
 unsigned __stdcall VBoxTimeSyncThread(void *pvUser);
@@ -94,5 +98,17 @@ BOOL     VBoxClipboardWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 void     VBoxDnDInit(void);
 void     VBoxDnDStop(void);
 unsigned __stdcall VBoxDnDThread(void *pvUser);
+
+void     VBoxVMInfoInit(void);
+void     VBoxVMInfoStop(void);
+unsigned __stdcall VBoxVMInfoThread(void *pvUser);
+
+
+/*********************************************************************************************************************************
+*   Guest properties (GuestProp.c)                                                                                               *
+*********************************************************************************************************************************/
+
+int VBoxGuestPropWrite(HANDLE hDevice, UINT32 idClient, const char *pszName, const char *pszValue, const char *pszFlags);
+int VBoxGuestPropRead(HANDLE hDevice, UINT32 idClient, const char *pszName, char *pszValue, DWORD cbValue);
 
 #endif /* !VBOXTRAY_H */

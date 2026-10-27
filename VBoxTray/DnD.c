@@ -579,7 +579,7 @@ static char *vboxDnDGhGetData(CLIPFORMAT cfFormat, IDataObject *pDataObj)
                     {
                         memcpy(pszAnsi, pch, cb);
                         pszAnsi[cb] = '\0';
-                        pszData = VBoxDnDAnsiToUtf8(pszAnsi);
+                        pszData = VBoxTrayAnsiToUtf8(pszAnsi);
                         free(pszAnsi);
                     }
                     GlobalUnlock(Medium.hGlobal);

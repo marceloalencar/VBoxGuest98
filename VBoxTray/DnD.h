@@ -57,7 +57,6 @@ int VBoxDnDGhSendData(HANDLE hDevice, UINT32 idClient, const char *pszData, BOOL
 *   Text and names (DnDUtil.c)                                                                                                   *
 *********************************************************************************************************************************/
 
-char *VBoxDnDAnsiToUtf8(const char *psz);
 int   VBoxDnDBuildPath(const char *pszDropDir, const char *pchRel, DWORD cchRel, char *pszPath);
 DWORD VBoxDnDStrNLen(const BYTE *pb, DWORD cb);
 int   VBoxDnDBuildHDrop(char *pszUriList, const char *pszDropDir, void **ppv, DWORD *pcb);

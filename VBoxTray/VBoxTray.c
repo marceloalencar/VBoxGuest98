@@ -2,8 +2,8 @@
  * VBoxTray - Guest Additions tray application for Windows 98/ME.
  *
  * Runs the service threads (mouse integration, time synchronization, shared
- * clipboard, guest statistics, display resizing, drag and drop) and shows a tray icon with
- * an Exit command.  Started at logon
+ * clipboard, guest statistics, display resizing, drag and drop, guest
+ * properties) and shows a tray icon with an Exit command.  Started at logon
  * through the Run registry key (see VBoxGst.inf).
  */
 
@@ -12,6 +12,7 @@
 #include <shellapi.h>
 #include <process.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 
 
@@ -70,6 +71,7 @@ static VBOXTRAYSERVICE g_aServices[] =
     { "Stats",     NULL,              VBoxStatsThread,     NULL,              NULL },
     { "Display",   NULL,              VBoxDisplayThread,   NULL,              NULL },
     { "DnD",       VBoxDnDInit,       VBoxDnDThread,       VBoxDnDStop,       NULL },
+    { "VMInfo",    VBoxVMInfoInit,    VBoxVMInfoThread,    VBoxVMInfoStop,    NULL },
 };
 
 static HINSTANCE g_hInstance;
@@ -101,6 +103,65 @@ void __cdecl VBoxTrayLogRel(const char *pszFormat, ...)
     va_end(va);
     if (cch > 0)
         VbglR3WriteLog(g_hVBoxTrayLog, szLine, sizeof(s_szPrefix) - 1 + cch);
+}
+
+/**
+ * Converts text in the ANSI code page to UTF-8.
+ *
+ * @returns Zero terminated UTF-8 (malloc'ed), NULL on failure.
+ */
+char *VBoxTrayAnsiToUtf8(const char *psz)
+{
+    WCHAR *pwsz;
+    BYTE *pbRet;
+    DWORD off = 0;
+    int cwc;
+    int i;
+
+    cwc = MultiByteToWideChar(CP_ACP, 0, psz, -1, NULL, 0);
+    if (cwc <= 0)
+        return NULL;
+    pwsz = (WCHAR *)malloc(cwc * sizeof(WCHAR));
+    pbRet = (BYTE *)malloc(cwc * 3); /* Up to 3 bytes per UTF-16 unit, 4 per surrogate pair. */
+    if (!pwsz || !pbRet || !MultiByteToWideChar(CP_ACP, 0, psz, -1, pwsz, cwc))
+    {
+        free(pwsz);
+        free(pbRet);
+        return NULL;
+    }
+
+    for (i = 0; i < cwc; i++)
+    {
+        DWORD uc = pwsz[i];
+        if (   uc >= 0xd800 && uc <= 0xdbff
+            && i + 1 < cwc && pwsz[i + 1] >= 0xdc00 && pwsz[i + 1] <= 0xdfff)
+        {
+            uc = 0x10000 + ((uc - 0xd800) << 10) + (pwsz[i + 1] - 0xdc00);
+            i++;
+        }
+        if (uc < 0x80)
+            pbRet[off++] = (BYTE)uc;
+        else if (uc < 0x800)
+        {
+            pbRet[off++] = (BYTE)(0xc0 | (uc >> 6));
+            pbRet[off++] = (BYTE)(0x80 | (uc & 0x3f));
+        }
+        else if (uc < 0x10000)
+        {
+            pbRet[off++] = (BYTE)(0xe0 | (uc >> 12));
+            pbRet[off++] = (BYTE)(0x80 | ((uc >> 6) & 0x3f));
+            pbRet[off++] = (BYTE)(0x80 | (uc & 0x3f));
+        }
+        else
+        {
+            pbRet[off++] = (BYTE)(0xf0 | (uc >> 18));
+            pbRet[off++] = (BYTE)(0x80 | ((uc >> 12) & 0x3f));
+            pbRet[off++] = (BYTE)(0x80 | ((uc >> 6) & 0x3f));
+            pbRet[off++] = (BYTE)(0x80 | (uc & 0x3f));
+        }
+    }
+    free(pwsz);
+    return (char *)pbRet; /* The terminator was converted too. */
 }
 
 
