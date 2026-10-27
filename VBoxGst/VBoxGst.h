@@ -131,8 +131,6 @@ typedef struct VBOXGUESTDEVEXT
     VMMDevEvents *pIrqAckEvents;
     /** Preallocated mouse status request, used by the DPC. */
     VMMDevReqMouseStatus *pMouseStatusReq;
-    /** Preallocated power off request, used during shutdown. */
-    VMMDevPowerStateRequest *pPowerStateReq;
     /** Events acknowledged by the ISR, not yet processed by the DPC.
      *  Only accessed with the vgdrvAtomic helpers. */
     UINT32 volatile fIsrEvents;
@@ -224,10 +222,6 @@ typedef struct VBOXGUESTDEVEXTWIN
 
     /** Symbolic link name of the registered device interface. */
     UNICODE_STRING InterfaceName;
-
-    /** Configuration (driver registry key): tell the host to power off the
-     *  VM when Windows shuts down ("PowerOffOnShutdown", default 0). */
-    BOOLEAN fPowerOffOnShutdown;
 } VBOXGUESTDEVEXTWIN;
 typedef VBOXGUESTDEVEXTWIN *PVBOXGUESTDEVEXTWIN;
 
@@ -242,7 +236,6 @@ int  VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXT pDevExt, PDEVICE_OBJECT pPd
                                     void *pvMMIOBase, UINT32 cbMMIO, UINT32 fFixedEvents);
 void VGDrvCommonDeleteDevExtResources(PVBOXGUESTDEVEXT pDevExt);
 void VGDrvCommonProcessEvents(PVBOXGUESTDEVEXT pDevExt, UINT32 fEvents);
-void VGDrvCommonReportPowerOff(PVBOXGUESTDEVEXT pDevExt);
 
 int  VGDrvCommonCreateSession(PVBOXGUESTDEVEXT pDevExt, BOOLEAN fUserSession, PVBOXGUESTSESSION *ppSession);
 void VGDrvCommonCloseSession(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);

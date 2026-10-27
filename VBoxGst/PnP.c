@@ -196,38 +196,6 @@ static void vgdrvWinUnmapVMMDevMemory(PVBOXGUESTDEVEXTWIN pDevExt)
 }
 
 /**
- * Reads the driver configuration from the driver registry key
- * (HKLM\System\CurrentControlSet\Services\Class\System\00xx on Windows 98).
- *
- * @param   pDevExt     The device extension.
- */
-static void vgdrvWinReadConfiguration(PVBOXGUESTDEVEXTWIN pDevExt)
-{
-    ULONG au32Buf[(sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG) + sizeof(ULONG) - 1) / sizeof(ULONG)];
-    PKEY_VALUE_PARTIAL_INFORMATION pInfo = (PKEY_VALUE_PARTIAL_INFORMATION)&au32Buf[0];
-    UNICODE_STRING ValueName;
-    HANDLE hKey;
-    ULONG cbRet = 0;
-    NTSTATUS rcNt;
-
-    pDevExt->fPowerOffOnShutdown = FALSE;
-
-    rcNt = IoOpenDeviceRegistryKey(pDevExt->pPhysicalDeviceObject, PLUGPLAY_REGKEY_DRIVER, KEY_READ, &hKey);
-    if (!NT_SUCCESS(rcNt))
-        return;
-
-    /* The Windows 98 INF syntax has no REG_DWORD, so accept 4 binary bytes too. */
-    RtlInitUnicodeString(&ValueName, L"PowerOffOnShutdown");
-    rcNt = ZwQueryValueKey(hKey, &ValueName, KeyValuePartialInformation, pInfo, sizeof(au32Buf), &cbRet);
-    if (   NT_SUCCESS(rcNt)
-        && (pInfo->Type == REG_DWORD || pInfo->Type == REG_BINARY)
-        && pInfo->DataLength >= sizeof(ULONG))
-        pDevExt->fPowerOffOnShutdown = *(ULONG UNALIGNED *)&pInfo->Data[0] != 0;
-
-    ZwClose(hKey);
-}
-
-/**
  * Sets up the device and its resources (IRP_MN_START_DEVICE).
  *
  * @returns NT status code.
@@ -288,9 +256,8 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PIRP pIrp)
             VGDrvLogRel("no interrupt assigned, events will not be delivered\n");
         if (NT_SUCCESS(rcNt))
         {
-            vgdrvWinReadConfiguration(pDevExt);
-            VGDrvLogRel("started: I/O port %#x, IRQ level %u, PowerOffOnShutdown=%u\n",
-                        pDevExt->uIoPortPhysAddr.LowPart, pDevExt->uInterruptLevel, pDevExt->fPowerOffOnShutdown);
+            VGDrvLogRel("started: I/O port %#x, IRQ level %u\n", pDevExt->uIoPortPhysAddr.LowPart,
+                        pDevExt->uInterruptLevel);
             if (pDevExt->InterfaceName.Buffer)
                 IoSetDeviceInterfaceState(&pDevExt->InterfaceName, TRUE);
             pDevExt->enmDevState = VGDRVWINDEVSTATE_STARTED;
@@ -405,11 +372,9 @@ NTSTATUS NTAPI vgdrvWinPnP(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 /**
  * Handle the Power requests.
  *
- * Everything is passed down; on system shutdown the host is optionally told
- * to power off the VM (see VBOXGUESTDEVEXTWIN::fPowerOffOnShutdown).  The
- * condition is the one of upstream vgdrvNtNt5PlusPower, which does it
- * unconditionally; here it stays opt-in until it is known when Windows 98
- * sends this IRP during shutdown.
+ * Everything is passed down.  Unlike upstream vgdrvNtNt5PlusPower, the host
+ * isn't told to power off the VM on shutdown: Windows 98 and ME do it
+ * themselves through the BIOS APM interface.
  *
  * @returns   NT status code
  * @param     pDevObj   device object
@@ -418,16 +383,6 @@ NTSTATUS NTAPI vgdrvWinPnP(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 NTSTATUS NTAPI vgdrvWinPower(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 {
     PVBOXGUESTDEVEXTWIN pDevExt = (PVBOXGUESTDEVEXTWIN)pDevObj->DeviceExtension;
-    PIO_STACK_LOCATION pStack = IoGetCurrentIrpStackLocation(pIrp);
-
-    if (   pStack->MinorFunction == IRP_MN_SET_POWER
-        && pStack->Parameters.Power.Type == SystemPowerState
-        && pStack->Parameters.Power.State.SystemState >= PowerSystemShutdown
-        && (   pStack->Parameters.Power.ShutdownType == PowerActionShutdown
-            || pStack->Parameters.Power.ShutdownType == PowerActionShutdownOff)
-        && pDevExt->fPowerOffOnShutdown
-        && pDevExt->enmDevState == VGDRVWINDEVSTATE_STARTED)
-        VGDrvCommonReportPowerOff(&pDevExt->Core);
 
     PoStartNextPowerIrp(pIrp);
     IoSkipCurrentIrpStackLocation(pIrp);

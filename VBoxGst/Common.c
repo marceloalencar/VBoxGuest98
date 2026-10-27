@@ -209,21 +209,6 @@ static int vgdrvReportDriverStatus(VBoxGuestFacilityStatus enmStatus)
     return rc;
 }
 
-/**
- * Tells the host the guest is powering off.  Callable at any IRQL.
- */
-void VGDrvCommonReportPowerOff(PVBOXGUESTDEVEXT pDevExt)
-{
-    VMMDevPowerStateRequest *pReq = pDevExt->pPowerStateReq;
-    if (pReq)
-    {
-        pReq->header.rc = VERR_GENERAL_FAILURE;
-        pReq->powerState = VMMDevPowerState_PowerOff;
-        VGDrvLogRel("Windows is shutting down, powering off the VM\n");
-        VbglR0GRPerform(&pReq->header);
-    }
-}
-
 
 /*********************************************************************************************************************************
 *   Heartbeat                                                                                                                    *
@@ -422,9 +407,6 @@ int VGDrvCommonInitDevExtResources(PVBOXGUESTDEVEXT pDevExt, PDEVICE_OBJECT pPdo
     if (RT_SUCCESS(rc))
         rc = VbglR0GRAlloc((VMMDevRequestHeader **)&pDevExt->pMouseStatusReq, sizeof(VMMDevReqMouseStatus),
                            VMMDevReq_GetMouseStatus);
-    if (RT_SUCCESS(rc))
-        rc = VbglR0GRAlloc((VMMDevRequestHeader **)&pDevExt->pPowerStateReq, sizeof(VMMDevPowerStateRequest),
-                           VMMDevReq_SetPowerStatus);
 
     /*
      * Report the guest info back to VMMDev and set the interrupt control
@@ -487,11 +469,6 @@ void VGDrvCommonDeleteDevExtResources(PVBOXGUESTDEVEXT pDevExt)
     {
         VbglR0GRFree(&pDevExt->pMouseStatusReq->header);
         pDevExt->pMouseStatusReq = NULL;
-    }
-    if (pDevExt->pPowerStateReq)
-    {
-        VbglR0GRFree(&pDevExt->pPowerStateReq->header);
-        pDevExt->pPowerStateReq = NULL;
     }
 
     VbglR0TerminatePrimary();
