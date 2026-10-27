@@ -17,14 +17,34 @@
  */
 int VBoxDnDConnect(HANDLE hDevice, UINT32 *pidClient)
 {
-    VBGLR3HGCMMSG Msg;
     int rc;
 
     rc = VbglR3HgcmConnect(hDevice, VBOX_DND_SERVICE_NAME, pidClient);
     if (RT_FAILURE(rc))
         return rc;
 
-    if (!VbglR3HgcmMsgInit(&Msg, *pidClient, GUEST_DND_FN_CONNECT, 3, VBOXDND_CALL_TIMEOUT_MS, 0))
+    rc = VBoxDnDHandshake(hDevice, *pidClient);
+    if (RT_FAILURE(rc))
+    {
+        VbglR3HgcmDisconnect(hDevice, *pidClient);
+        *pidClient = 0;
+    }
+    return rc;
+}
+
+/**
+ * Tells the service the protocol version and features of a client.
+ *
+ * Also needed after the VM is restored from a saved state: the service keeps
+ * no state, so it recreates the client with protocol version 0 and refuses
+ * the protocol v3 calls (upstream reconnects in that case).
+ */
+int VBoxDnDHandshake(HANDLE hDevice, UINT32 idClient)
+{
+    VBGLR3HGCMMSG Msg;
+    int rc;
+
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_CONNECT, 3, VBOXDND_CALL_TIMEOUT_MS, 0))
         rc = VERR_NO_MEMORY;
     else
     {
@@ -36,18 +56,12 @@ int VBoxDnDConnect(HANDLE hDevice, UINT32 *pidClient)
     }
 
     /* Reporting the features fails on older hosts, which is fine. */
-    if (RT_SUCCESS(rc) && VbglR3HgcmMsgInit(&Msg, *pidClient, GUEST_DND_FN_REPORT_FEATURES, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
+    if (RT_SUCCESS(rc) && VbglR3HgcmMsgInit(&Msg, idClient, GUEST_DND_FN_REPORT_FEATURES, 2, VBOXDND_CALL_TIMEOUT_MS, 0))
     {
         VbglR3HgcmMsgSetU64(&Msg, 0, VBOX_DND_GF_NONE);
         VbglR3HgcmMsgSetU64(&Msg, 1, VBOX_DND_GF_1_MUST_BE_ONE);
         VbglR3HgcmMsgCall(hDevice, &Msg);
         VbglR3HgcmMsgFree(&Msg);
-    }
-
-    if (RT_FAILURE(rc))
-    {
-        VbglR3HgcmDisconnect(hDevice, *pidClient);
-        *pidClient = 0;
     }
     return rc;
 }

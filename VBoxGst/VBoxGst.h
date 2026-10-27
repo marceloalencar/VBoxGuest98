@@ -203,8 +203,8 @@ typedef struct VBOXGUESTDEVEXTWIN
 
     /** Interrupt object pointer. */
     PKINTERRUPT pInterruptObject;
-    /** Device interrupt level. */
-    ULONG uInterruptLevel;
+    /** Device interrupt level (IRQL). */
+    KIRQL uInterruptLevel;
     /** Device interrupt vector. */
     ULONG uInterruptVector;
     /** Affinity mask. */

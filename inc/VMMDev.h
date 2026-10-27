@@ -331,6 +331,14 @@ typedef struct
     UINT64 time;
 } VMMDevReqHostTime;
 
+/** VMMDevReq_GetSessionId. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    /** OUT: Unique session ID, different after each start, reset or restore of the VM. */
+    UINT64 idSession;
+} VMMDevReqSessionId;
+
 /** VMMDevReq_AcknowledgeEvents. */
 typedef struct
 {
@@ -818,6 +826,7 @@ VMMDEV_ASSERT_SIZE(VMMDevRequestHeader, 24);
 VMMDEV_ASSERT_SIZE(VMMDevReqMouseStatus, 24+12);
 VMMDEV_ASSERT_SIZE(VMMDevReqHostVersion, 24+16);
 VMMDEV_ASSERT_SIZE(VMMDevReqHostTime, 24+8);
+VMMDEV_ASSERT_SIZE(VMMDevReqSessionId, 24+8);
 VMMDEV_ASSERT_SIZE(VMMDevEvents, 24+4);
 VMMDEV_ASSERT_SIZE(VMMDevCtlGuestFilterMask, 24+8);
 VMMDEV_ASSERT_SIZE(VMMDevReportGuestInfo, 24+8);

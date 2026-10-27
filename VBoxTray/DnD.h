@@ -28,6 +28,7 @@ typedef struct VBOXDNDENTER
 *********************************************************************************************************************************/
 
 int VBoxDnDConnect(HANDLE hDevice, UINT32 *pidClient);
+int VBoxDnDHandshake(HANDLE hDevice, UINT32 idClient);
 int VBoxDnDGetNextMsg(HANDLE hDevice, UINT32 idClient, UINT32 *puMsg, UINT32 *pcParms);
 int VBoxDnDRecvSimple(HANDLE hDevice, UINT32 idClient, UINT32 uMsg);
 int VBoxDnDRecvAction(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, UINT32 *px, UINT32 *py, VBOXDNDENTER **ppEnter);

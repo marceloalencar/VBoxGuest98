@@ -60,6 +60,9 @@
 #define WM_VBOXDND_GH_RESET         (WM_APP + 27)
 /** Worker -> window: the host cancelled the operation. */
 #define WM_VBOXDND_CANCEL           (WM_APP + 28)
+/** Worker -> window: the VM was restored from a saved state, redo the
+ *  protocol handshake. */
+#define WM_VBOXDND_RESTORED         (WM_APP + 29)
 
 /** Timer: hide the proxy window if no guest drag showed up. */
 #define VBOXDND_GH_TIMER_HIDE       1
@@ -742,6 +745,14 @@ static LRESULT CALLBACK vboxDnDWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
             vboxDnDGhReset();
             return 0;
 
+        case WM_VBOXDND_RESTORED:
+        {
+            int rc = VBoxDnDHandshake(g_DnDUi.hDevice, g_DnDUi.idClient);
+            if (RT_FAILURE(rc))
+                VBoxTrayLogRel("DnD: the window thread's handshake after the restore failed, rc=%d\n", rc);
+            return 0;
+        }
+
         case WM_TIMER:
             if (wParam == VBOXDND_GH_TIMER_HIDE)
             {
@@ -1025,6 +1036,7 @@ unsigned __stdcall VBoxDnDThread(void *pvUser)
     HANDLE hDevice;
     HANDLE hUiThread = NULL;
     UINT32 idClient = 0;
+    UINT64 idSession = 0;
     unsigned cErrors = 0;
     unsigned idThread;
     int rc;
@@ -1067,15 +1079,33 @@ unsigned __stdcall VBoxDnDThread(void *pvUser)
     g_DnDShared.idClient = idClient;
     LeaveCriticalSection(&g_DnDShared.CritSect);
     VBoxTrayLogRel("DnD: connected, client %lu\n", idClient);
+    VbglR3QuerySessionId(hDevice, &idSession);
 
     while (!g_fVBoxTrayShutdown)
     {
         UINT32 uMsg = 0;
         UINT32 cParms = 0;
+        UINT64 idSessionNow;
 
         rc = VBoxDnDGetNextMsg(hDevice, idClient, &uMsg, &cParms);
         if (RT_SUCCESS(rc))
+        {
+            /* After a restore from a saved state the service has forgotten the
+               protocol version of both clients, like upstream's VbglR3DnDEventGetNext
+               checks.  The window thread redoes its own handshake before it
+               handles what we post next. */
+            if (   RT_SUCCESS(VbglR3QuerySessionId(hDevice, &idSessionNow))
+                && idSessionNow != idSession)
+            {
+                VBoxTrayLogRel("DnD: the VM was restored, redoing the protocol handshake\n");
+                idSession = idSessionNow;
+                rc = VBoxDnDHandshake(hDevice, idClient);
+                if (RT_FAILURE(rc))
+                    VBoxTrayLogRel("DnD: the handshake after the restore failed, rc=%d\n", rc);
+                PostMessage(g_DnDShared.hwnd, WM_VBOXDND_RESTORED, 0, 0);
+            }
             rc = vboxDnDProcessHostMsg(hDevice, idClient, uMsg);
+        }
         else if (g_fVBoxTrayShutdown || rc == VERR_INVALID_HANDLE)
             break; /* Disconnected by VBoxDnDStop. */
         else if (rc == VERR_CANCELLED)

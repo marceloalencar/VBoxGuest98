@@ -229,6 +229,22 @@ int VbglR3GetHostTime(HANDLE hDevice, UINT64 *pmsUnixEpoch)
 }
 
 /**
+ * Gets the VM session ID, which changes after each start, reset or restore of
+ * the VM (VbglR3QuerySessionId).
+ */
+int VbglR3QuerySessionId(HANDLE hDevice, UINT64 *pidSession)
+{
+    VMMDevReqSessionId Req;
+    int rc;
+
+    vbglR3GRInit(&Req.header, sizeof(Req), VMMDevReq_GetSessionId);
+    rc = vbglR3GRPerform(hDevice, &Req.header);
+    if (RT_SUCCESS(rc))
+        *pidSession = Req.idSession;
+    return rc;
+}
+
+/**
  * Reports the status of a guest facility to the host.
  */
 int VbglR3ReportFacilityStatus(HANDLE hDevice, VBoxGuestFacilityType enmFacility, VBoxGuestFacilityStatus enmStatus)

@@ -107,7 +107,10 @@ static NTSTATUS vgdrvWinScanPCIResourceList(PVBOXGUESTDEVEXTWIN pDevExt, PCM_RES
                 if (!fGotIrq)
                 {
                     /* Save information. */
-                    pDevExt->uInterruptLevel    = pPartialData->u.Interrupt.Level;
+                    /* Only the low byte is an IRQL; when the device is started after
+                       Windows is up (e.g. installed at logon), NTKERN leaves garbage
+                       in the rest. */
+                    pDevExt->uInterruptLevel    = (KIRQL)pPartialData->u.Interrupt.Level;
                     pDevExt->uInterruptVector   = pPartialData->u.Interrupt.Vector;
                     pDevExt->fInterruptAffinity = pPartialData->u.Interrupt.Affinity;
 
@@ -269,8 +272,8 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PIRP pIrp)
                                       pDevExt,                        /* Device context. */
                                       NULL,                           /* Optional spinlock. */
                                       pDevExt->uInterruptVector,      /* Interrupt vector. */
-                                      (KIRQL)pDevExt->uInterruptLevel,/* Irql. */
-                                      (KIRQL)pDevExt->uInterruptLevel,/* SynchronizeIrql. */
+                                      pDevExt->uInterruptLevel,       /* Irql. */
+                                      pDevExt->uInterruptLevel,       /* SynchronizeIrql. */
                                       pDevExt->enmInterruptMode,      /* LevelSensitive or Latched. */
                                       TRUE,                           /* Shareable interrupt. */
                                       pDevExt->fInterruptAffinity,    /* CPU affinity. */
