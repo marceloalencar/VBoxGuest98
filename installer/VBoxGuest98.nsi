@@ -5,7 +5,7 @@
 ;
 ; Windows 98/ME can't install a driver programmatically from 32-bit code, so the
 ; installer preinstalls it, as the Oney WDM book suggests for these systems:
-;  - copies VBoxGst.sys and VBoxTray.exe to their final places;
+;  - copies VBoxGst.sys, VBoxTray.exe and VBoxMou.vxd to their final places;
 ;  - copies an INF without CopyFiles lines to INF\OTHER under the name the
 ;    Add Hardware wizard would use (<Provider><file name>);
 ;  - sets ConfigFlags to CONFIGFLAG_REINSTALL on every VirtualBox Guest Device
@@ -224,6 +224,7 @@ Section "${PRODUCT}" SecMain
 
   !insertmacro INSTALL_FILE "..\VBoxGst\${OBJDIR}\i386\VBoxGst.sys" "$WINDIR\SYSTEM32\DRIVERS" "VBoxGst.sys" "VBOXGST.NEW"
   !insertmacro INSTALL_FILE "..\VBoxTray\${OBJDIR}\i386\VBoxTray.exe" "$SYSDIR" "VBoxTray.exe" "VBOXTRAY.NEW"
+  !insertmacro INSTALL_FILE "..\VBoxMou\${OBJDIR}\i386\VBoxMou.vxd" "$SYSDIR" "VBoxMou.vxd" "VBOXMOU.NEW"
 
   SetOutPath "$WINDIR\INF\OTHER"
   File "/oname=${INF_NAME}" "obj\VBoxGst.inf"
@@ -270,6 +271,7 @@ Section "Uninstall"
 
   DeleteRegValue HKLM "${RUN_KEY}" "VBoxTray"
   Delete /REBOOTOK "$SYSDIR\VBoxTray.exe"
+  Delete /REBOOTOK "$SYSDIR\VBoxMou.vxd"
   Delete /REBOOTOK "$WINDIR\SYSTEM32\DRIVERS\VBoxGst.sys"
   Delete "$WINDIR\INF\OTHER\${INF_NAME}"
 

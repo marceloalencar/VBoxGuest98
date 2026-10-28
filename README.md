@@ -4,6 +4,8 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 ## Components
 **VBoxGst**: PCI driver for VirtualBox Guest Device (`PCI\VEN_80EE&DEV_CAFE`)
 
+**VBoxMou**: Dynamic VxD loaded by VBoxTray for DirectInput applications and full screen MS-DOS programs
+
 **VBoxTray**: Tray application started at logon:
 - Mouse pointer integration
 - Time synchronization
@@ -38,6 +40,7 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxGst/VbglR0.c` | VMMDev request allocation (DMA common buffers) and submission |
 | `VBoxGst/Log.c` | Release logging through the backdoor port |
 | `VBoxTray/VBoxTray.c` | WinMain, tray icon, service threads |
+| `VBoxMou/VBoxMou.asm` | VxD posting mouse moves to VMOUSE (DirectInput, MS-DOS) |
 | `VBoxTray/Mouse.c` | Mouse pointer integration |
 | `VBoxTray/TimeSync.c` | Guest clock synchronization |
 | `VBoxTray/Clipboard.c` | Shared clipboard (text, images, HTML) |
@@ -58,16 +61,16 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 
 **VBoxTray**: Seamless mode.
 
-**Mouse**: Current implementation may fail on DirectInput applications.
-
 # Compiling:
 Microsoft Visual C++ 6.0
 
 Microsoft Windows 2000 DDK
 
+Microsoft Windows 98 DDK (assembler and linker for the VxD)
+
 [NSIS 2.46](https://sourceforge.net/projects/nsis/files/NSIS%202/2.46/) (optional)
 
 Run `build.cmd` (free build) or `build.cmd checked` in this folder. It expects
-Visual C++ in `C:\MSVC600`, the DDK in `C:\NTDDK` and NSIS in `C:\NSIS246`;
-set `MSVC6DIR`, `DDKDIR` and `NSIS2DIR` to use other locations. Alternatively run `build -cZ`
-in the Free Build Environment and `makensis installer\VBoxGuest98.nsi`.
+Visual C++ in `C:\MSVC600`, the Windows 2000 DDK in `C:\NTDDK`, the Windows 98
+DDK in `C:\98DDK` and NSIS in `C:\NSIS246`; set `MSVC6DIR`, `DDKDIR`,
+`DDK98DIR` and `NSIS2DIR` to use other locations.
