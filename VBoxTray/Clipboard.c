@@ -1,9 +1,17 @@
 /** @file
- * VBoxTray - Shared clipboard (text, images, HTML), legacy HGCM protocol.
+ * VBoxTray - Shared clipboard (text, images, HTML).
+ *
+ * Like upstream (VbglR3ClipboardConnectEx), the guest reports
+ * VBOX_SHCL_GF_0_CONTEXT_ID: with a host that has it too the messages come
+ * with VBOX_SHCL_GUEST_FN_MSG_PEEK_WAIT + MSG_GET and the data the host
+ * reads is answered with its context ID; otherwise the legacy protocol
+ * (VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT) is used.  With a host that also
+ * does file transfers (VBOX_SHCL_GF_0_TRANSFERS), files copied on one side
+ * can be pasted on the other (ClipFile.c).
  *
  * Two threads share one HGCM client (and therefore one overlapped handle):
- *  - The worker thread (VBoxClipboardThread) blocks in
- *    VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT and handles the host messages.
+ *  - The worker thread (VBoxClipboardThread) waits for the host messages
+ *    and handles them.
  *  - The VBoxTray window thread is in the clipboard viewer chain and reports
  *    guest clipboard changes to the host (VBoxClipboardWndProc).
  * The guest clipboard itself is only touched by the window thread; the
@@ -23,7 +31,7 @@
  * the applications that use that.
  */
 
-#include "VBoxTray.h"
+#include "DnD.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +50,9 @@
 /** Worker -> window: get guest clipboard data.  wParam: the format
  *  (one VBOX_SHCL_FMT_XXX bit), lParam: VBOXCLIPDATA to fill. */
 #define WM_VBOXCLIP_GET             (WM_APP + 12)
+/** Worker -> window: get the paths of the files copied in the guest.
+ *  lParam: char * to set (VBoxClipboardGetFiles). */
+#define WM_VBOXCLIP_GET_FILES       (WM_APP + 13)
 
 /** First guess for the size of the host data. */
 #define VBOXCLIP_READ_SIZE          16384
@@ -80,6 +91,8 @@ static CRITICAL_SECTION g_ClipCritSect;
 static HANDLE g_hClipDevice = INVALID_HANDLE_VALUE;
 /** The HGCM client ID, 0 if not connected. */
 static UINT32 g_idClipClient = 0;
+/** Both sides have VBOX_SHCL_GF_0_CONTEXT_ID: the new protocol is used. */
+static BOOL g_fClipContextId = FALSE;
 /** Next window in the clipboard viewer chain (window thread only). */
 static HWND g_hwndNextViewer = NULL;
 /** The "HTML Format" (CF_HTML) clipboard format. */
@@ -91,25 +104,147 @@ static UINT g_cfHtml = 0;
 *********************************************************************************************************************************/
 
 /**
- * Waits for the next host message.
+ * Reports our features and gets the host's (VBOX_SHCL_GUEST_FN_REPORT_FEATURES).
+ *
+ * @returns The host features, 0 for an older host.
  */
-static int vboxClipGetHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 *puMsg, UINT32 *pfFormats)
+static UINT64 vboxClipReportFeatures(HANDLE hDevice, UINT32 idClient)
+{
+    VBGLR3HGCMMSG Msg;
+    UINT64 fHostFeatures = 0;
+    int rc;
+
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_REPORT_FEATURES, 2, VBOXCLIP_CALL_TIMEOUT_MS, 0))
+        return 0;
+    VbglR3HgcmMsgSetU64(&Msg, 0, VBOX_SHCL_GF_0_CONTEXT_ID | VBOX_SHCL_GF_0_TRANSFERS);
+    VbglR3HgcmMsgSetU64(&Msg, 1, VBOX_SHCL_GF_1_MUST_BE_ONE);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    if (RT_SUCCESS(rc) && !(VbglR3HgcmMsgGetU64(&Msg, 1) & VBOX_SHCL_GF_1_MUST_BE_ONE))
+        fHostFeatures = VbglR3HgcmMsgGetU64(&Msg, 0);
+    VbglR3HgcmMsgFree(&Msg);
+    return fHostFeatures;
+}
+
+/**
+ * Makes a call without parameters (VBOX_SHCL_GUEST_FN_MSG_CANCEL).
+ */
+static void vboxClipCancel(HANDLE hDevice, UINT32 idClient)
+{
+    VBGLR3HGCMMSG Msg;
+
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_MSG_CANCEL, 0, VBOXCLIP_CALL_TIMEOUT_MS, 0))
+        return;
+    VbglR3HgcmMsgCall(hDevice, &Msg);
+    VbglR3HgcmMsgFree(&Msg);
+}
+
+/**
+ * Fetches a peeked message whose parameters are [0] the message ID in and
+ * a 32 or 64-bit value out, [1] a 32-bit value out (MSG_GET).
+ */
+static int vboxClipFetch(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, BOOL f64, UINT64 *pu64, UINT32 *pu32)
 {
     VBGLR3HGCMMSG Msg;
     int rc;
 
-    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT, 2, VBOXGUEST98_WAIT_INFINITE, 0))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_MSG_GET, 2, VBOXCLIP_CALL_TIMEOUT_MS, 0))
         return VERR_NO_MEMORY;
-    VbglR3HgcmMsgSetU32(&Msg, 0, 0);
+    if (f64)
+        VbglR3HgcmMsgSetU64(&Msg, 0, uMsg);
+    else
+        VbglR3HgcmMsgSetU32(&Msg, 0, uMsg);
     VbglR3HgcmMsgSetU32(&Msg, 1, 0);
-
-    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    do
+        rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    while (rc == VERR_INTERRUPTED);
     if (RT_SUCCESS(rc))
     {
-        *puMsg     = VbglR3HgcmMsgGetU32(&Msg, 0);
-        *pfFormats = VbglR3HgcmMsgGetU32(&Msg, 1);
+        *pu64 = VbglR3HgcmMsgGetU64(&Msg, 0);
+        *pu32 = VbglR3HgcmMsgGetU32(&Msg, 1);
     }
     VbglR3HgcmMsgFree(&Msg);
+    return rc;
+}
+
+/**
+ * Waits for the next host message.
+ *
+ * @returns VBox status code.
+ * @param   puMsg       Where to return the message (VBOX_SHCL_HOST_MSG_XXX).
+ * @param   pfFormats   Where to return its formats or format.
+ * @param   pidContext  Where to return the context ID of a READ_DATA_CID
+ *                      (0 otherwise), for the answer.
+ */
+static int vboxClipGetHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 *puMsg, UINT32 *pfFormats, UINT64 *pidContext)
+{
+    VBGLR3HGCMMSG Msg;
+    UINT64 u64 = 0;
+    UINT32 uMsg;
+    int rc;
+
+    *pidContext = 0;
+    *pfFormats  = 0;
+    if (!g_fClipContextId)
+    {
+        if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT, 2, VBOXGUEST98_WAIT_INFINITE, 0))
+            return VERR_NO_MEMORY;
+        VbglR3HgcmMsgSetU32(&Msg, 0, 0);
+        VbglR3HgcmMsgSetU32(&Msg, 1, 0);
+
+        rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+        if (RT_SUCCESS(rc))
+        {
+            *puMsg     = VbglR3HgcmMsgGetU32(&Msg, 0);
+            *pfFormats = VbglR3HgcmMsgGetU32(&Msg, 1);
+        }
+        VbglR3HgcmMsgFree(&Msg);
+        return rc;
+    }
+
+    /* The new protocol: peek, then fetch what the message carries. */
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_MSG_PEEK_WAIT, 2, VBOXGUEST98_WAIT_INFINITE, 0))
+        return VERR_NO_MEMORY;
+    VbglR3HgcmMsgSetU64(&Msg, 0, 0);
+    VbglR3HgcmMsgSetU32(&Msg, 1, 0);
+    rc = VbglR3HgcmMsgCall(hDevice, &Msg);
+    uMsg = (UINT32)VbglR3HgcmMsgGetU64(&Msg, 0);
+    VbglR3HgcmMsgFree(&Msg);
+    if (rc == VERR_INTERRUPTED)
+        vboxClipCancel(hDevice, idClient); /* Like upstream, or the next wait gets VERR_RESOURCE_BUSY. */
+    if (RT_FAILURE(rc))
+        return rc;
+
+    *puMsg = uMsg;
+    switch (uMsg)
+    {
+        case VBOX_SHCL_HOST_MSG_FORMATS_REPORT:
+            /* Upstream sets parameter 0 as 32-bit here (vbglR3ClipboardFormatsReportRecv). */
+            rc = vboxClipFetch(hDevice, idClient, uMsg, FALSE, &u64, pfFormats);
+            break;
+        case VBOX_SHCL_HOST_MSG_READ_DATA_CID:
+            rc = vboxClipFetch(hDevice, idClient, uMsg, TRUE, pidContext, pfFormats);
+            break;
+        case VBOX_SHCL_HOST_MSG_READ_DATA:
+            rc = vboxClipFetch(hDevice, idClient, uMsg, FALSE, &u64, pfFormats);
+            break;
+        case VBOX_SHCL_HOST_MSG_TRANSFER_STATUS:
+            VBoxClipFileOnStatus(hDevice, idClient);
+            break;
+        case VBOX_SHCL_HOST_MSG_TRANSFER_ROOT_LIST_HDR_READ:
+        case VBOX_SHCL_HOST_MSG_TRANSFER_ROOT_LIST_ENTRY_READ:
+        case VBOX_SHCL_HOST_MSG_TRANSFER_LIST_OPEN:
+        case VBOX_SHCL_HOST_MSG_TRANSFER_LIST_CLOSE:
+        case VBOX_SHCL_HOST_MSG_TRANSFER_LIST_HDR_READ:
+        case VBOX_SHCL_HOST_MSG_TRANSFER_LIST_ENTRY_READ:
+        case VBOX_SHCL_HOST_MSG_TRANSFER_OBJ_OPEN:
+        case VBOX_SHCL_HOST_MSG_TRANSFER_OBJ_CLOSE:
+        case VBOX_SHCL_HOST_MSG_TRANSFER_OBJ_READ:
+            rc = VBoxClipFileOnHostMsg(hDevice, idClient, uMsg);
+            break;
+        default:
+            /* QUIT and CANCELED carry nothing to fetch. */
+            break;
+    }
     return rc;
 }
 
@@ -189,20 +324,28 @@ static int vboxClipReadData(HANDLE hDevice, UINT32 idClient, UINT32 fFormat, voi
 }
 
 /**
- * Sends guest clipboard data to the host (answer to VBOX_SHCL_HOST_MSG_READ_DATA).
+ * Sends guest clipboard data to the host (answer to
+ * VBOX_SHCL_HOST_MSG_READ_DATA or _READ_DATA_CID).
+ *
+ * @param   idContext   The context ID of a READ_DATA_CID.
  */
-static int vboxClipWriteData(HANDLE hDevice, UINT32 idClient, UINT32 fFormat, const void *pv, UINT32 cb)
+static int vboxClipWriteData(HANDLE hDevice, UINT32 idClient, UINT64 idContext, UINT32 fFormat, const void *pv,
+                             UINT32 cb)
 {
     VBGLR3HGCMMSG Msg;
+    UINT32 iParm = 0;
     int rc;
 
     if (cb > VBOXGUEST98_MAX_HGCM_DATA_SIZE)
         cb = 0; /* Too big for the driver, send nothing rather than leaving the host waiting. */
 
-    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_DATA_WRITE, 2, VBOXCLIP_CALL_TIMEOUT_MS, cb))
+    if (!VbglR3HgcmMsgInit(&Msg, idClient, VBOX_SHCL_GUEST_FN_DATA_WRITE, g_fClipContextId ? 3 : 2,
+                           VBOXCLIP_CALL_TIMEOUT_MS, cb))
         return VERR_NO_MEMORY;
-    VbglR3HgcmMsgSetU32(&Msg, 0, fFormat);
-    VbglR3HgcmMsgSetBuf(&Msg, 1, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cb, pv);
+    if (g_fClipContextId)
+        VbglR3HgcmMsgSetU64(&Msg, iParm++, idContext);
+    VbglR3HgcmMsgSetU32(&Msg, iParm++, fFormat);
+    VbglR3HgcmMsgSetBuf(&Msg, iParm, VBOXGUEST98_HGCM_PARM_BUFFER_IN, cb, pv);
 
     rc = VbglR3HgcmMsgCall(hDevice, &Msg);
     VbglR3HgcmMsgFree(&Msg);
@@ -229,6 +372,8 @@ static UINT32 vboxClipGuestFormats(void)
         fFormats |= VBOX_SHCL_FMT_BITMAP;
     if (g_cfHtml && IsClipboardFormatAvailable(g_cfHtml))
         fFormats |= VBOX_SHCL_FMT_HTML;
+    if (IsClipboardFormatAvailable(CF_HDROP) && VBoxClipFileEnabled())
+        fFormats |= VBOX_SHCL_FMT_URI_LIST;
     return fFormats;
 }
 
@@ -304,8 +449,9 @@ static DWORD vboxClipDibSize(const BITMAPINFOHEADER *pHdr, DWORD cbMax)
  */
 static void vboxClipReportGuestFormats(HWND hwnd)
 {
-    if (GetClipboardOwner() == hwnd)
+    if (GetClipboardOwner() == hwnd || VBoxClipFileIsCurrent())
         return;
+    VBoxClipFileForget();
 
     EnterCriticalSection(&g_ClipCritSect);
     if (g_idClipClient)
@@ -713,22 +859,56 @@ static BOOL vboxClipOpen(HWND hwnd)
 }
 
 /**
+ * Gets the paths of the files copied in the guest (CF_HDROP), each zero
+ * terminated, then an empty one.
+ *
+ * @param   ppszFiles   Where to return them (malloc'ed), NULL if there are none.
+ */
+static void vboxClipGetGuestFiles(HWND hwnd, char **ppszFiles)
+{
+    HANDLE hMem;
+
+    *ppszFiles = NULL;
+    if (!vboxClipOpen(hwnd))
+        return;
+    hMem = GetClipboardData(CF_HDROP);
+    if (hMem)
+        *ppszFiles = VBoxDnDCopyHDrop((HDROP)hMem);
+    CloseClipboard();
+}
+
+/**
  * The host reported new clipboard content: replace the guest clipboard
  * content with announcements of the formats we can render
  * (ShClWinClearAndAnnounceFormats).  The data is fetched only when an
- * application asks for it (WM_RENDERFORMAT).
+ * application asks for it (WM_RENDERFORMAT).  Files go on the clipboard as
+ * an OLE data object instead (ClipFile.c), like upstream, alone.
  *
  * @param   hwnd        Our window, becomes the clipboard owner.
  * @param   fFormats    The host formats (VBOX_SHCL_FMT_XXX).
  */
 static void vboxClipAnnounce(HWND hwnd, UINT32 fFormats)
 {
+    if ((fFormats & VBOX_SHCL_FMT_URI_LIST) && VBoxClipFileEnabled())
+    {
+        HANDLE hDevice;
+        UINT32 idClient;
+
+        EnterCriticalSection(&g_ClipCritSect);
+        hDevice  = g_hClipDevice;
+        idClient = g_idClipClient;
+        LeaveCriticalSection(&g_ClipCritSect);
+        if (idClient && VBoxClipFileAnnounce(hDevice, idClient))
+            return;
+    }
+
     if (!vboxClipOpen(hwnd))
     {
         VBoxTrayLogRel("Clipboard: cannot open the clipboard for the host formats %#lx\n", fFormats);
         return;
     }
     EmptyClipboard();
+    VBoxClipFileForget();
     if (fFormats & VBOX_SHCL_FMT_UNICODETEXT)
     {
         /* Windows 98 does not make one from the other, so offer both. */
@@ -776,6 +956,8 @@ BOOL VBoxClipboardWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LR
         case WM_DESTROY:
             ChangeClipboardChain(hwnd, g_hwndNextViewer);
             g_hwndNextViewer = NULL;
+            /* Out of the chain first: emptying mustn't reach the host. */
+            VBoxClipFileTerm();
             return FALSE;
 
         case WM_CHANGECBCHAIN:
@@ -811,6 +993,10 @@ BOOL VBoxClipboardWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LR
             vboxClipGetGuest(hwnd, (UINT32)wParam, (VBOXCLIPDATA *)lParam);
             return TRUE;
 
+        case WM_VBOXCLIP_GET_FILES:
+            vboxClipGetGuestFiles(hwnd, (char **)lParam);
+            return TRUE;
+
         default:
             return FALSE;
     }
@@ -828,17 +1014,21 @@ void VBoxClipboardInit(void)
 {
     InitializeCriticalSection(&g_ClipCritSect);
     g_cfHtml = RegisterClipboardFormat(VBOXCLIP_CF_HTML_NAME);
+    VBoxClipFileInit();
 }
 
 /**
- * Wakes up the worker thread by disconnecting the client: the host then
- * completes the pending VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT.
+ * Wakes up the worker thread: its pending MSG_PEEK_WAIT is cancelled (the
+ * service doesn't complete it on a disconnect) and the client disconnected,
+ * which also completes a legacy MSG_OLD_GET_WAIT.
  */
 void VBoxClipboardStop(void)
 {
     EnterCriticalSection(&g_ClipCritSect);
     if (g_idClipClient)
     {
+        if (g_fClipContextId)
+            vboxClipCancel(g_hClipDevice, g_idClipClient);
         VbglR3HgcmDisconnect(g_hClipDevice, g_idClipClient);
         g_idClipClient = 0;
     }
@@ -846,9 +1036,23 @@ void VBoxClipboardStop(void)
 }
 
 /**
+ * Gets the paths of the files copied in the guest from the window thread
+ * (worker thread, for ClipFile.c).
+ *
+ * @returns Each zero terminated, then an empty one (malloc'ed); NULL if
+ *          there are none.
+ */
+char *VBoxClipboardGetFiles(void)
+{
+    char *pszFiles = NULL;
+    SendMessage(g_hwndVBoxTray, WM_VBOXCLIP_GET_FILES, 0, (LPARAM)&pszFiles);
+    return pszFiles;
+}
+
+/**
  * Handles one host message.
  */
-static void vboxClipProcessHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, UINT32 fFormats)
+static void vboxClipProcessHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, UINT32 fFormats, UINT64 idContext)
 {
     VBOXCLIPDATA Data;
     UINT32 fFormat;
@@ -863,6 +1067,7 @@ static void vboxClipProcessHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg,
             break;
 
         case VBOX_SHCL_HOST_MSG_READ_DATA:
+        case VBOX_SHCL_HOST_MSG_READ_DATA_CID:
             /* The host asks for one format at a time. */
             if (fFormats & VBOX_SHCL_FMT_UNICODETEXT)
                 fFormat = VBOX_SHCL_FMT_UNICODETEXT;
@@ -877,7 +1082,7 @@ static void vboxClipProcessHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg,
             else
                 fFormat = VBOX_SHCL_FMT_UNICODETEXT;
             /* Always answer, the host waits for it. */
-            vboxClipWriteData(hDevice, idClient, fFormat, Data.pv, Data.pv ? Data.cb : 0);
+            vboxClipWriteData(hDevice, idClient, idContext, fFormat, Data.pv, Data.pv ? Data.cb : 0);
             free(Data.pv);
             break;
 
@@ -898,6 +1103,8 @@ unsigned __stdcall VBoxClipboardThread(void *pvUser)
     UINT32 idClient = 0;
     UINT32 uMsg;
     UINT32 fFormats;
+    UINT64 idContext;
+    UINT64 fHostFeatures;
     int rcLast = VINF_SUCCESS;
     int rc;
 
@@ -915,7 +1122,12 @@ unsigned __stdcall VBoxClipboardThread(void *pvUser)
         VbglR3Close(hDevice);
         return 1;
     }
-    VBoxTrayLogRel("Clipboard: connected, client %lu\n", idClient);
+    fHostFeatures = vboxClipReportFeatures(hDevice, idClient);
+    g_fClipContextId = (fHostFeatures & VBOX_SHCL_HF_0_CONTEXT_ID) != 0;
+    VBoxClipFileSetEnabled(hDevice, idClient, g_fClipContextId && (fHostFeatures & VBOX_SHCL_HF_0_TRANSFERS));
+    VBoxTrayLogRel("Clipboard: connected, client %lu%s%s\n", idClient,
+                   g_fClipContextId ? ", context IDs" : ", legacy protocol",
+                   VBoxClipFileEnabled() ? ", file transfers" : "");
 
     EnterCriticalSection(&g_ClipCritSect);
     g_hClipDevice  = hDevice;
@@ -925,7 +1137,7 @@ unsigned __stdcall VBoxClipboardThread(void *pvUser)
 
     while (!g_fVBoxTrayShutdown)
     {
-        rc = vboxClipGetHostMsg(hDevice, idClient, &uMsg, &fFormats);
+        rc = vboxClipGetHostMsg(hDevice, idClient, &uMsg, &fFormats, &idContext);
         if (RT_FAILURE(rc))
         {
             /* VERR_INVALID_HANDLE: disconnected by VBoxClipboardStop. */
@@ -943,9 +1155,12 @@ unsigned __stdcall VBoxClipboardThread(void *pvUser)
             VBoxTrayLogRel("Clipboard: the host asked to quit\n");
             break;
         }
-        vboxClipProcessHostMsg(hDevice, idClient, uMsg, fFormats);
+        if (uMsg == VBOX_SHCL_HOST_MSG_CANCELED)
+            continue; /* VBoxClipboardStop, or the wait was interrupted. */
+        vboxClipProcessHostMsg(hDevice, idClient, uMsg, fFormats, idContext);
     }
 
+    VBoxClipFileWorkerDone();
     EnterCriticalSection(&g_ClipCritSect);
     idClient = g_idClipClient;
     g_idClipClient = 0;

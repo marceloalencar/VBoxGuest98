@@ -7,6 +7,7 @@
 
 #include "VBoxTray.h"
 #include <ole2.h>
+#include <shellapi.h>
 
 
 /** Timeout for fetching queued host messages and for answers (ms). */
@@ -61,6 +62,7 @@ int   VBoxDnDBuildPath(const char *pszDropDir, const char *pchRel, DWORD cchRel,
 DWORD VBoxDnDStrNLen(const BYTE *pb, DWORD cb);
 int   VBoxDnDBuildHDrop(char *pszUriList, const char *pszDropDir, void **ppv, DWORD *pcb);
 int   VBoxDnDBuildText(const char *pch, DWORD cch, void **ppv, DWORD *pcb);
+char *VBoxDnDCopyHDrop(HDROP hDrop);
 
 
 /*********************************************************************************************************************************

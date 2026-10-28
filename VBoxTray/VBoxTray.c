@@ -10,6 +10,7 @@
 #include "VBoxTray.h"
 #include "VBoxTrayRes.h"
 #include <shellapi.h>
+#include <ole2.h>
 #include <process.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -431,6 +432,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
     HANDLE hDevice;
     HWND hwnd;
     MSG Msg;
+    HRESULT hrOle;
 
     g_hInstance = hInstance;
 
@@ -477,6 +479,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
         return 1;
     }
 
+    /* The clipboard puts host files on the clipboard as an OLE data object,
+       served by this thread. */
+    hrOle = OleInitialize(NULL);
+    if (FAILED(hrOle))
+        VBoxTrayLogRel("OleInitialize failed, hr=%#lx\n", hrOle);
+
     vboxTrayReportStatus(VBoxGuestFacilityStatus_Init);
     vboxTrayInitServices();
 
@@ -498,6 +506,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
     vboxTrayReportStatus(VBoxGuestFacilityStatus_Terminating);
     vboxTrayStopServices();
     vboxTrayReportStatus(VBoxGuestFacilityStatus_Terminated);
+    if (SUCCEEDED(hrOle))
+        OleUninitialize();
 
     VBoxTrayLogRel("stopped\n");
     hDevice = g_hVBoxTrayLog;

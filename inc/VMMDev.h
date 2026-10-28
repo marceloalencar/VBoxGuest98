@@ -779,19 +779,46 @@ typedef struct
 
 
 /*********************************************************************************************************************************
-*   Shared clipboard HGCM service, legacy protocol (used by VBoxTray)                                                            *
+*   Shared clipboard HGCM service (used by VBoxTray)                                                                             *
 *********************************************************************************************************************************/
 
 #define VBOX_SHCL_SERVICE_NAME                          "VBoxSharedClipboard"
 
-/** @name Host messages (returned by VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT).
+/** @name Host messages (VBOX_SHCL_GUEST_FN_MSG_OLD_GET_WAIT, or MSG_PEEK_WAIT +
+ *  MSG_GET when both sides have VBOX_SHCL_GF_0_CONTEXT_ID).
  * @{ */
 /** The guest must disconnect and stop. */
 #define VBOX_SHCL_HOST_MSG_QUIT                         1
-/** The host wants the guest clipboard data in the given format. */
+/** The host wants the guest clipboard data in the given format (legacy).
+ *  MSG_GET parms: [0] message (32bit in) / 0, [1] format (32bit out). */
 #define VBOX_SHCL_HOST_MSG_READ_DATA                    2
-/** The host clipboard changed, the formats it now has are given. */
+/** The host clipboard changed, the formats it now has are given.  MSG_GET
+ *  parms: [0] message (32bit in) / context, [1] formats (32bit out). */
 #define VBOX_SHCL_HOST_MSG_FORMATS_REPORT               3
+/** A waiting MSG_PEEK_WAIT was cancelled (VINF_TRY_AGAIN). */
+#define VBOX_SHCL_HOST_MSG_CANCELED                     4
+/** The host wants the guest clipboard data, with a context ID for the
+ *  answer.  MSG_GET parms: [0] message (64bit in) / context (64bit out),
+ *  [1] format (32bit out). */
+#define VBOX_SHCL_HOST_MSG_READ_DATA_CID                5
+/** A file transfer status.  MSG_GET parms: [0] message (64bit in) / the
+ *  transfer's context (64bit out), [1] SHCLTRANSFERDIR_XXX (host's point of
+ *  view), [2] SHCLTRANSFERSTATUS_XXX, [3] status code, [4] flags. */
+#define VBOX_SHCL_HOST_MSG_TRANSFER_STATUS              50
+/** Requests of a transfer of guest files (the guest answers with the
+ *  matching GUEST_FN_XXX_WRITE or GUEST_FN_REPLY).  MSG_GET parms: [0]
+ *  message (64bit in) / context (64bit out), then like the guest function
+ *  of the same name. */
+#define VBOX_SHCL_HOST_MSG_TRANSFER_ROOT_LIST_HDR_READ  51
+#define VBOX_SHCL_HOST_MSG_TRANSFER_ROOT_LIST_ENTRY_READ 53
+#define VBOX_SHCL_HOST_MSG_TRANSFER_LIST_OPEN           55
+#define VBOX_SHCL_HOST_MSG_TRANSFER_LIST_CLOSE          56
+#define VBOX_SHCL_HOST_MSG_TRANSFER_LIST_HDR_READ       57
+#define VBOX_SHCL_HOST_MSG_TRANSFER_LIST_ENTRY_READ     59
+#define VBOX_SHCL_HOST_MSG_TRANSFER_OBJ_OPEN            61
+#define VBOX_SHCL_HOST_MSG_TRANSFER_OBJ_CLOSE           62
+/** Parms: [0] context, [1] handle (64bit), [2] size (32bit), [3] flags. */
+#define VBOX_SHCL_HOST_MSG_TRANSFER_OBJ_READ            63
 /** @} */
 
 /** @name Guest functions.
@@ -804,8 +831,104 @@ typedef struct
  *  [2] size of the data (32bit out).  VINF_BUFFER_OVERFLOW if the buffer is too small. */
 #define VBOX_SHCL_GUEST_FN_DATA_READ                    3
 /** Sends guest clipboard data (answer to READ_DATA).  Parms: [0] format (32bit in),
- *  [1] data (buffer in). */
+ *  [1] data (buffer in); with VBOX_SHCL_GF_0_CONTEXT_ID: [0] context (64bit
+ *  in), [1] format (32bit in), [2] data (buffer in). */
 #define VBOX_SHCL_GUEST_FN_DATA_WRITE                   4
+/** Reports the guest features and gets the host's.  Parms: [0] features 0
+ *  (64bit in/out), [1] features 1 (64bit in, VBOX_SHCL_GF_1_MUST_BE_ONE,
+ *  comes back cleared). */
+#define VBOX_SHCL_GUEST_FN_REPORT_FEATURES              6
+/** Waits for a host message.  Parms: [0] VM session ID (64bit in, 0 = no
+ *  check) / message (64bit out), [1] parameter count (32bit out). */
+#define VBOX_SHCL_GUEST_FN_MSG_PEEK_WAIT                9
+/** Fetches the message peeked at; parm [0] carries its ID on input. */
+#define VBOX_SHCL_GUEST_FN_MSG_GET                      10
+/** Answers the host; for a transfer status: [0] context (64bit), [1]
+ *  VBOX_SHCL_TX_REPLYMSGTYPE_TRANSFER_STATUS, [2] status code, [3] payload
+ *  (buffer in, empty), [4] SHCLTRANSFERSTATUS_XXX.  For the other reply
+ *  types [4] is the list or object handle (64bit). */
+#define VBOX_SHCL_GUEST_FN_REPLY                        11
+/** Reads the transfer's root list header.  Parms: [0] context (64bit),
+ *  [1] flags (32bit), [2] entry count (64bit out). */
+#define VBOX_SHCL_GUEST_FN_ROOT_LIST_HDR_READ           12
+/** Like ROOT_LIST_HDR_READ, giving the guest's (in). */
+#define VBOX_SHCL_GUEST_FN_ROOT_LIST_HDR_WRITE          13
+/** Reads a root list entry.  Parms: [0] context (64bit), [1] VBOX_SHCL_INFO_F_XXX,
+ *  [2] index (64bit), [3] name (buffer out, UTF-8), [4] info size (32bit),
+ *  [5] info (buffer out, SHCLFSOBJINFO). */
+#define VBOX_SHCL_GUEST_FN_ROOT_LIST_ENTRY_READ         14
+/** Like ROOT_LIST_ENTRY_READ, giving the guest's (in). */
+#define VBOX_SHCL_GUEST_FN_ROOT_LIST_ENTRY_WRITE        15
+/** Opens a directory list.  Parms: [0] context (64bit), [1] flags, [2]
+ *  filter, [3] path (buffers in, the path relative to the transfer), [4]
+ *  handle (64bit out). */
+#define VBOX_SHCL_GUEST_FN_LIST_OPEN                    16
+/** Closes a list.  Parms: [0] context (64bit), [1] handle (64bit). */
+#define VBOX_SHCL_GUEST_FN_LIST_CLOSE                   17
+/** Reads a list header.  Parms: [0] context (64bit), [1] handle (64bit),
+ *  [2] flags, [3] features (32bit out), [4] entry count (64bit out),
+ *  [5] total size (64bit out). */
+#define VBOX_SHCL_GUEST_FN_LIST_HDR_READ                18
+/** Like LIST_HDR_READ, giving the guest's (in). */
+#define VBOX_SHCL_GUEST_FN_LIST_HDR_WRITE               19
+/** Reads a list entry.  Parms: [0] context (64bit), [1] handle (64bit),
+ *  [2] VBOX_SHCL_INFO_F_XXX, [3] name, [4] info size, [5] info. */
+#define VBOX_SHCL_GUEST_FN_LIST_ENTRY_READ              20
+/** Like LIST_ENTRY_READ, giving the guest's (in). */
+#define VBOX_SHCL_GUEST_FN_LIST_ENTRY_WRITE             21
+/** Opens a file.  Parms: [0] context (64bit), [1] handle (64bit out), [2]
+ *  path (buffer in), [3] SHCL_OBJ_CF_XXX. */
+#define VBOX_SHCL_GUEST_FN_OBJ_OPEN                     22
+/** Closes a file.  Parms: [0] context (64bit), [1] handle (64bit). */
+#define VBOX_SHCL_GUEST_FN_OBJ_CLOSE                    23
+/** Reads from a file.  Parms: [0] context (64bit), [1] handle (64bit), [2]
+ *  size (32bit in/out), [3] data (buffer out), [4] checksum size, [5]
+ *  checksum (empty). */
+#define VBOX_SHCL_GUEST_FN_OBJ_READ                     24
+/** Like OBJ_READ, giving guest file data (in; the answer to OBJ_READ). */
+#define VBOX_SHCL_GUEST_FN_OBJ_WRITE                    25
+/** Cancels the caller's pending MSG_PEEK_WAIT.  No parms. */
+#define VBOX_SHCL_GUEST_FN_MSG_CANCEL                   26
+/** Agrees on the transfer chunk size.  Parms: [0] largest (32bit in/out),
+ *  [1] preferred (32bit in/out, 0 = the host picks). */
+#define VBOX_SHCL_GUEST_FN_NEGOTIATE_CHUNK_SIZE         28
+/** @} */
+
+/** @name File transfers.
+ * @{ */
+#define VBOX_SHCL_TX_REPLYMSGTYPE_TRANSFER_STATUS       1
+#define VBOX_SHCL_TX_REPLYMSGTYPE_LIST_OPEN             2
+#define VBOX_SHCL_TX_REPLYMSGTYPE_LIST_CLOSE            3
+#define VBOX_SHCL_TX_REPLYMSGTYPE_OBJ_OPEN              4
+#define VBOX_SHCL_TX_REPLYMSGTYPE_OBJ_CLOSE             5
+#define VBOX_SHCL_INFO_F_FSOBJINFO                      (1U << 0)
+#define SHCL_OBJ_CF_ACCESS_READ                         0x00001000U
+#define SHCL_OBJ_CF_ACCESS_DENYWRITE                    0x00008000U
+#define SHCLTRANSFERSTATUS_INITIALIZED                  1
+#define SHCLTRANSFERSTATUS_UNINITIALIZED                2
+#define SHCLTRANSFERSTATUS_STARTED                      3
+#define SHCLTRANSFERSTATUS_COMPLETED                    4
+#define SHCLTRANSFERSTATUS_CANCELED                     5
+#define SHCLTRANSFERSTATUS_KILLED                       6
+#define SHCLTRANSFERSTATUS_ERROR                        7
+#define SHCLTRANSFERSTATUS_REQUESTED                    8
+/** Host to guest is TO_REMOTE from the host's point of view. */
+#define SHCLTRANSFERDIR_FROM_REMOTE                     1
+#define SHCLTRANSFERDIR_TO_REMOTE                       2
+/** Context IDs: session (16 bits), transfer (16 bits), event (32 bits). */
+#define VBOX_SHCL_CONTEXTID_GET_TRANSFER(idContext)     ((UINT32)(((idContext) >> 32) & 0xffff))
+/** @} */
+
+/** @name Feature bits (VBOX_SHCL_GUEST_FN_REPORT_FEATURES), 64bit.
+ * @{ */
+/** Guest: uses MSG_PEEK_WAIT / MSG_GET and answers with context IDs. */
+#define VBOX_SHCL_GF_0_CONTEXT_ID                       ((UINT64)1 << 0)
+/** Guest: does file transfers (needs VBOX_SHCL_GF_0_CONTEXT_ID too). */
+#define VBOX_SHCL_GF_0_TRANSFERS                        ((UINT64)1 << 1)
+#define VBOX_SHCL_GF_1_MUST_BE_ONE                      ((UINT64)1 << 63)
+/** Host: the same. */
+#define VBOX_SHCL_HF_0_CONTEXT_ID                       ((UINT64)1 << 0)
+#define VBOX_SHCL_HF_0_TRANSFERS                        ((UINT64)1 << 1)
 /** @} */
 
 /** @name Clipboard formats (bit mask).

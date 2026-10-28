@@ -523,29 +523,6 @@ static void vboxDnDGhOnPending(void)
 }
 
 /**
- * Copies the paths of a CF_HDROP into a list of zero terminated strings
- * ending with an empty one.
- */
-static char *vboxDnDGhCopyHDrop(HDROP hDrop)
-{
-    UINT cFiles = DragQueryFile(hDrop, 0xffffffff, NULL, 0);
-    DWORD cb = 1;
-    DWORD off = 0;
-    char *pszRet;
-    UINT i;
-
-    for (i = 0; i < cFiles; i++)
-        cb += DragQueryFile(hDrop, i, NULL, 0) + 1;
-    pszRet = (char *)malloc(cb);
-    if (!pszRet)
-        return NULL;
-    for (i = 0; i < cFiles; i++)
-        off += DragQueryFile(hDrop, i, &pszRet[off], cb - off) + 1;
-    pszRet[off] = '\0';
-    return pszRet;
-}
-
-/**
  * Gets the data of a guest drag: a CF_HDROP style path list or UTF-8 text.
  *
  * @returns The data (malloc'ed), NULL on failure.
@@ -566,7 +543,7 @@ static char *vboxDnDGhGetData(CLIPFORMAT cfFormat, IDataObject *pDataObj)
         if (Medium.tymed == TYMED_HGLOBAL)
         {
             if (cfFormat == CF_HDROP)
-                pszData = vboxDnDGhCopyHDrop((HDROP)Medium.hGlobal);
+                pszData = VBoxDnDCopyHDrop((HDROP)Medium.hGlobal);
             else
             {
                 const char *pch = (const char *)GlobalLock(Medium.hGlobal);

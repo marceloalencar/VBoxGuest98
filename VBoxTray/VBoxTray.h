@@ -5,7 +5,7 @@
  *  - VBoxTray.c   WinMain, hidden window, tray icon, service threads.
  *  - Mouse.c      Mouse pointer integration (absolute positioning).
  *  - TimeSync.c   Guest clock synchronization with the host.
- *  - Clipboard.c  Shared clipboard (text, images, HTML).
+ *  - Clipboard.c  Shared clipboard (text, images, HTML; ClipFile.c: files).
  *  - Stats.c      Guest statistics (memory, processes, CPU load).
  *  - Display.c    Resizing the guest display to the host window.
  *  - Seamless.c   Seamless mode (visible region of the guest windows).
@@ -103,6 +103,19 @@ void     VBoxClipboardInit(void);
 void     VBoxClipboardStop(void);
 unsigned __stdcall VBoxClipboardThread(void *pvUser);
 BOOL     VBoxClipboardWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT *plResult);
+char    *VBoxClipboardGetFiles(void);
+
+/* Clipboard file transfers (ClipFile.c), used by Clipboard.c. */
+void     VBoxClipFileInit(void);
+void     VBoxClipFileSetEnabled(HANDLE hDevice, UINT32 idClient, BOOL fEnabled);
+BOOL     VBoxClipFileEnabled(void);
+void     VBoxClipFileOnStatus(HANDLE hDevice, UINT32 idClient);
+int      VBoxClipFileOnHostMsg(HANDLE hDevice, UINT32 idClient, UINT32 uMsg);
+void     VBoxClipFileWorkerDone(void);
+BOOL     VBoxClipFileAnnounce(HANDLE hDevice, UINT32 idClient);
+BOOL     VBoxClipFileIsCurrent(void);
+void     VBoxClipFileForget(void);
+void     VBoxClipFileTerm(void);
 
 void     VBoxDnDInit(void);
 void     VBoxDnDStop(void);

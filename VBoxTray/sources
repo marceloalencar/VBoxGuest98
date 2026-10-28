@@ -13,6 +13,7 @@ SOURCES= \
         Mouse.c \
         TimeSync.c \
         Clipboard.c \
+        ClipFile.c \
         Stats.c \
         Display.c \
         Seamless.c \

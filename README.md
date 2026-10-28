@@ -9,7 +9,7 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 **VBoxTray**: Tray application started at logon:
 - Mouse pointer integration
 - Time synchronization
-- Shared clipboard
+- Shared clipboard (text, images, HTML, files and folders
 - Guest statistics
 - Display resizing ("Auto-resize Guest Display")
 - Seamless mode
@@ -20,6 +20,19 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 - Reports the VBoxTrayClient facility status to the host
 - Logs start/stop, setup failures, clock adjustments, display mode changes
   and the statistics interval to the VM's `VBox.log`
+
+## Installing
+Run `VBoxGuest98-x.y.z.exe` in the guest and restart Windows when it asks.
+Command line options (upper or lower case):
+- `/S`: silent installation
+- `/R`: restart Windows without asking at the end
+
+For example, from the host with guest control (`START.EXE` keeps the installer
+running when it closes VBoxTray):
+```
+VBoxManage guestcontrol <vm> copyto --username x --password x --target-directory C:\WINDOWS\TEMP\ VBoxGuest98-x.y.z.exe
+VBoxManage guestcontrol <vm> start --username x --password x --exe C:\WINDOWS\COMMAND\START.EXE -- START.EXE C:\WINDOWS\TEMP\VBoxGuest98-x.y.z.exe /S /R
+```
 
 ## Recommended: SoftGPU
 Windows 98 has no driver for the VirtualBox graphics adapters and falls back
@@ -46,6 +59,7 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/Mouse.c` | Mouse pointer integration |
 | `VBoxTray/TimeSync.c` | Guest clock synchronization |
 | `VBoxTray/Clipboard.c` | Shared clipboard (text, images, HTML) |
+| `VBoxTray/ClipFile.c` | Clipboard file transfers (virtual files from the host, guest files to the host) |
 | `VBoxTray/Stats.c` | Guest statistics |
 | `VBoxTray/Display.c` | Display resizing |
 | `VBoxTray/Seamless.c` | Seamless mode (visible region of the guest windows) |

@@ -253,3 +253,28 @@ int VBoxDnDBuildText(const char *pch, DWORD cch, void **ppv, DWORD *pcb)
     *pcb = offDst;
     return VINF_SUCCESS;
 }
+
+/**
+ * Copies the paths of a CF_HDROP into a list of zero terminated strings
+ * ending with an empty one.
+ *
+ * @returns The list (malloc'ed), NULL if out of memory.
+ */
+char *VBoxDnDCopyHDrop(HDROP hDrop)
+{
+    UINT cFiles = DragQueryFile(hDrop, 0xffffffff, NULL, 0);
+    DWORD cb = 1;
+    DWORD off = 0;
+    char *pszRet;
+    UINT i;
+
+    for (i = 0; i < cFiles; i++)
+        cb += DragQueryFile(hDrop, i, NULL, 0) + 1;
+    pszRet = (char *)malloc(cb);
+    if (!pszRet)
+        return NULL;
+    for (i = 0; i < cFiles; i++)
+        off += DragQueryFile(hDrop, i, &pszRet[off], cb - off) + 1;
+    pszRet[off] = '\0';
+    return pszRet;
+}

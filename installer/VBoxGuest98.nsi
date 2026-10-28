@@ -13,6 +13,9 @@
 ; At the next boot Windows (re)installs the device from that INF without asking
 ; anything; the INF's AddReg also creates the Run entry for VBoxTray.
 ;
+; Options: /S installs silently; /R restarts Windows without asking when the
+; installation ends (e.g. "VBoxGuest98-x.y.z.exe /S /R" from guest control).
+;
 ; This file is in the Windows-1252 code page (NSIS 2 has no UTF-8 support).
 
 !include LogicLib.nsh
@@ -45,6 +48,8 @@
 !define UNINSTALLER     "VBoxGuest98Uninst.exe"
 !define TRAY_WND_CLASS  "VBoxTrayToolWndClass"
 !define TRAY_MUTEX      "VBoxTray98SingleInstance"
+
+Var RebootNow
 
 Name "${PRODUCT} ${VBG_VERSION}"
 !if "${BUILDTYPE}" == "checked"
@@ -202,6 +207,15 @@ Function .onInit
     SetSilent silent
   ${EndIf}
 
+  ; GetOptions ignores the case, so /r works too.
+  StrCpy $RebootNow 0
+  ClearErrors
+  ${GetOptions} $0 "/R" $1
+  ${IfNot} ${Errors}
+  ${AndIf} $1 == ""
+    StrCpy $RebootNow 1
+  ${EndIf}
+
   ${If} ${IsNT}
   ${OrIfNot} ${AtLeastWin98}
   ${OrIfNot} ${AtMostWinME}
@@ -248,6 +262,9 @@ Section "${PRODUCT}" SecMain
 
   ; The driver is (re)installed by Windows at the next startup.
   SetRebootFlag true
+  ${If} $RebootNow = 1
+    Reboot
+  ${EndIf}
 SectionEnd
 
 
