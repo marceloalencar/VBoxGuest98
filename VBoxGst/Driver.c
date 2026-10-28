@@ -208,7 +208,12 @@ static NTSTATUS NTAPI vgdrvWinCreate(PDEVICE_OBJECT pDevObj, PIRP pIrp)
     if (!pFileObj)
         return vgdrvWinCompleteRequest(pIrp, STATUS_INVALID_PARAMETER, 0);
 
-    rc = VGDrvCommonCreateSession(&pDevExt->Core, (BOOLEAN)(pIrp->RequestorMode == UserMode), &pSession);
+    /* Every handle is a user mode one: NTKERN passes Win32 CreateFile calls
+       with RequestorMode = KernelMode, so it can't tell them apart, and
+       kernel mode clients use the internal I/O controls without a handle.
+       Counting VBoxTray as a kernel client let the host refuse its second
+       guest control client (one kernel client per service at most). */
+    rc = VGDrvCommonCreateSession(&pDevExt->Core, TRUE, &pSession);
     if (RT_FAILURE(rc))
         return vgdrvWinCompleteRequest(pIrp, vgdrvRcToNtStatus(rc), 0);
 

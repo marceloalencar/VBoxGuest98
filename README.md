@@ -16,6 +16,7 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 - Drag and drop between the host and the guest
 - Guest properties: OS version, logged in user and network adapters (IP, MAC),
   shown in the VM's session information and `VBoxManage guestproperty enumerate`
+- Guest control: `VBoxManage guestcontrol`
 - Reports the VBoxTrayClient facility status to the host
 - Logs start/stop, setup failures, clock adjustments, display mode changes
   and the statistics interval to the VM's `VBox.log`
@@ -55,6 +56,8 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/DnDObj.c` | Drag and drop OLE objects (data object, drop source, drop target) in C |
 | `VBoxTray/VMInfo.c` | Guest properties: OS, user and network information |
 | `VBoxTray/GuestProp.c` | Guest property HGCM calls |
+| `VBoxTray/GstCtrl.c` | Guest control: sessions and programs started from the host |
+| `VBoxTray/GstCtrlFile.c` | Guest control: files, directories and file systems |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode, HGCM call builder |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 | `installer/VBoxGuest98.nsi` | Installer and uninstaller (NSIS 2.46) |

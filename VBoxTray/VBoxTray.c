@@ -73,6 +73,7 @@ static VBOXTRAYSERVICE g_aServices[] =
     { "Seamless",  NULL,              VBoxSeamlessThread,  NULL,              NULL },
     { "DnD",       VBoxDnDInit,       VBoxDnDThread,       VBoxDnDStop,       NULL },
     { "VMInfo",    VBoxVMInfoInit,    VBoxVMInfoThread,    VBoxVMInfoStop,    NULL },
+    { "GstCtrl",   VBoxGstCtrlInit,   VBoxGstCtrlThread,   VBoxGstCtrlStop,   NULL },
 };
 
 static HINSTANCE g_hInstance;
@@ -104,6 +105,109 @@ void __cdecl VBoxTrayLogRel(const char *pszFormat, ...)
     va_end(va);
     if (cch > 0)
         VbglR3WriteLog(g_hVBoxTrayLog, szLine, sizeof(s_szPrefix) - 1 + cch);
+}
+
+/**
+ * Converts UTF-8 to UTF-16 (invalid sequences become U+FFFD; characters
+ * outside the BMP become surrogate pairs).
+ *
+ * @returns Zero terminated text (malloc'ed), NULL if out of memory.
+ */
+static WCHAR *vboxTrayUtf8ToUtf16(const char *pch, DWORD cch)
+{
+    const BYTE *pb = (const BYTE *)pch;
+    WCHAR *pwszRet = (WCHAR *)malloc((cch + 1) * sizeof(WCHAR));
+    DWORD off = 0;
+    DWORD cwc = 0;
+
+    if (!pwszRet)
+        return NULL;
+    while (off < cch)
+    {
+        BYTE b = pb[off++];
+        DWORD uc;
+        DWORD cTrail;
+        DWORD ucMin;
+
+        if (b < 0x80)
+        {
+            pwszRet[cwc++] = b;
+            continue;
+        }
+        if ((b & 0xe0) == 0xc0)
+        {
+            uc = b & 0x1f;
+            cTrail = 1;
+            ucMin = 0x80;
+        }
+        else if ((b & 0xf0) == 0xe0)
+        {
+            uc = b & 0x0f;
+            cTrail = 2;
+            ucMin = 0x800;
+        }
+        else if ((b & 0xf8) == 0xf0)
+        {
+            uc = b & 0x07;
+            cTrail = 3;
+            ucMin = 0x10000;
+        }
+        else
+        {
+            pwszRet[cwc++] = 0xfffd;
+            continue;
+        }
+        while (cTrail && off < cch && (pb[off] & 0xc0) == 0x80)
+        {
+            uc = (uc << 6) | (pb[off++] & 0x3f);
+            cTrail--;
+        }
+        if (cTrail || uc < ucMin || uc > 0x10ffff || (uc >= 0xd800 && uc <= 0xdfff))
+            pwszRet[cwc++] = 0xfffd;
+        else if (uc >= 0x10000)
+        {
+            /* Room: a 4 byte sequence makes 2 UTF-16 units. */
+            uc -= 0x10000;
+            pwszRet[cwc++] = (WCHAR)(0xd800 + (uc >> 10));
+            pwszRet[cwc++] = (WCHAR)(0xdc00 + (uc & 0x3ff));
+        }
+        else
+            pwszRet[cwc++] = (WCHAR)uc;
+    }
+    pwszRet[cwc] = 0;
+    return pwszRet;
+}
+
+/**
+ * Converts UTF-8 to the ANSI code page.
+ *
+ * @returns Zero terminated text (malloc'ed), NULL if out of memory.
+ * @param   chDefault   Replaces characters the code page doesn't have.
+ */
+char *VBoxTrayUtf8ToAnsi(const char *pch, DWORD cch, char chDefault)
+{
+    char szDefault[2];
+    WCHAR *pwsz;
+    char *pszRet = NULL;
+    int cb;
+
+    szDefault[0] = chDefault;
+    szDefault[1] = '\0';
+    pwsz = vboxTrayUtf8ToUtf16(pch, cch);
+    if (!pwsz)
+        return NULL;
+    cb = WideCharToMultiByte(CP_ACP, 0, pwsz, -1, NULL, 0, szDefault, NULL);
+    if (cb > 0)
+    {
+        pszRet = (char *)malloc(cb);
+        if (pszRet && !WideCharToMultiByte(CP_ACP, 0, pwsz, -1, pszRet, cb, szDefault, NULL))
+        {
+            free(pszRet);
+            pszRet = NULL;
+        }
+    }
+    free(pwsz);
+    return pszRet;
 }
 
 /**

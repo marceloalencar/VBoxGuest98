@@ -12,6 +12,8 @@
  *  - DnD.c        Drag and drop between the host and the guest (DnDHgcm.c:
  *                 its HGCM calls, DnDTransfer.c: transfers, DnDUtil.c: text
  *                 conversions, DnDObj.c: OLE objects).
+ *  - GstCtrl.c    Guest control: programs started from the host (GstCtrlFile.c:
+ *                 files, directories and file systems).
  *  - VMInfo.c     Guest properties with the OS, user and network information
  *                 (GuestProp.c: the VBoxGuestPropSvc calls).
  *  - VbglR3.c     Access to the VBoxGst driver (VBoxGuest98.h interface).
@@ -87,6 +89,9 @@ extern HWND g_hwndVBoxTray;
 void __cdecl VBoxTrayLogRel(const char *pszFormat, ...);
 /** Converts ANSI code page text to zero terminated UTF-8 (malloc'ed), NULL on failure. */
 char *VBoxTrayAnsiToUtf8(const char *psz);
+/** Converts cch bytes of UTF-8 to zero terminated ANSI code page text (malloc'ed), NULL if out of
+ *  memory; characters the code page doesn't have become chDefault. */
+char *VBoxTrayUtf8ToAnsi(const char *pch, DWORD cch, char chDefault);
 
 unsigned __stdcall VBoxMouseThread(void *pvUser);
 unsigned __stdcall VBoxTimeSyncThread(void *pvUser);
@@ -106,6 +111,10 @@ unsigned __stdcall VBoxDnDThread(void *pvUser);
 void     VBoxVMInfoInit(void);
 void     VBoxVMInfoStop(void);
 unsigned __stdcall VBoxVMInfoThread(void *pvUser);
+
+void     VBoxGstCtrlInit(void);
+void     VBoxGstCtrlStop(void);
+unsigned __stdcall VBoxGstCtrlThread(void *pvUser);
 
 
 /*********************************************************************************************************************************

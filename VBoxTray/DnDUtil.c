@@ -14,109 +14,6 @@
 *********************************************************************************************************************************/
 
 /**
- * Converts UTF-8 to UTF-16 (invalid sequences become U+FFFD; characters
- * outside the BMP become surrogate pairs).
- *
- * @returns Zero terminated text (malloc'ed), NULL if out of memory.
- */
-static WCHAR *vboxDnDUtf8ToUtf16(const char *pch, DWORD cch)
-{
-    const BYTE *pb = (const BYTE *)pch;
-    WCHAR *pwszRet = (WCHAR *)malloc((cch + 1) * sizeof(WCHAR));
-    DWORD off = 0;
-    DWORD cwc = 0;
-
-    if (!pwszRet)
-        return NULL;
-    while (off < cch)
-    {
-        BYTE b = pb[off++];
-        DWORD uc;
-        DWORD cTrail;
-        DWORD ucMin;
-
-        if (b < 0x80)
-        {
-            pwszRet[cwc++] = b;
-            continue;
-        }
-        if ((b & 0xe0) == 0xc0)
-        {
-            uc = b & 0x1f;
-            cTrail = 1;
-            ucMin = 0x80;
-        }
-        else if ((b & 0xf0) == 0xe0)
-        {
-            uc = b & 0x0f;
-            cTrail = 2;
-            ucMin = 0x800;
-        }
-        else if ((b & 0xf8) == 0xf0)
-        {
-            uc = b & 0x07;
-            cTrail = 3;
-            ucMin = 0x10000;
-        }
-        else
-        {
-            pwszRet[cwc++] = 0xfffd;
-            continue;
-        }
-        while (cTrail && off < cch && (pb[off] & 0xc0) == 0x80)
-        {
-            uc = (uc << 6) | (pb[off++] & 0x3f);
-            cTrail--;
-        }
-        if (cTrail || uc < ucMin || uc > 0x10ffff || (uc >= 0xd800 && uc <= 0xdfff))
-            pwszRet[cwc++] = 0xfffd;
-        else if (uc >= 0x10000)
-        {
-            /* Room: a 4 byte sequence makes 2 UTF-16 units. */
-            uc -= 0x10000;
-            pwszRet[cwc++] = (WCHAR)(0xd800 + (uc >> 10));
-            pwszRet[cwc++] = (WCHAR)(0xdc00 + (uc & 0x3ff));
-        }
-        else
-            pwszRet[cwc++] = (WCHAR)uc;
-    }
-    pwszRet[cwc] = 0;
-    return pwszRet;
-}
-
-/**
- * Converts UTF-8 to the ANSI code page.
- *
- * @returns Zero terminated text (malloc'ed), NULL if out of memory.
- * @param   chDefault   Replaces characters the code page doesn't have.
- */
-static char *vboxDnDUtf8ToAnsi(const char *pch, DWORD cch, char chDefault)
-{
-    char szDefault[2];
-    WCHAR *pwsz;
-    char *pszRet = NULL;
-    int cb;
-
-    szDefault[0] = chDefault;
-    szDefault[1] = '\0';
-    pwsz = vboxDnDUtf8ToUtf16(pch, cch);
-    if (!pwsz)
-        return NULL;
-    cb = WideCharToMultiByte(CP_ACP, 0, pwsz, -1, NULL, 0, szDefault, NULL);
-    if (cb > 0)
-    {
-        pszRet = (char *)malloc(cb);
-        if (pszRet && !WideCharToMultiByte(CP_ACP, 0, pwsz, -1, pszRet, cb, szDefault, NULL))
-        {
-            free(pszRet);
-            pszRet = NULL;
-        }
-    }
-    free(pwsz);
-    return pszRet;
-}
-
-/**
  * Turns one UTF-8 path component from the host into a safe Windows 98 name.
  *
  * Characters Windows doesn't allow in names become '_', so do trailing dots
@@ -136,7 +33,7 @@ static int vboxDnDAppendName(char *pszDst, DWORD cbDst, const char *pchName, DWO
 
     if (!cchName)
         return VERR_INVALID_NAME;
-    pszName = vboxDnDUtf8ToAnsi(pchName, cchName, '_');
+    pszName = VBoxTrayUtf8ToAnsi(pchName, cchName, '_');
     if (!pszName)
         return VERR_NO_MEMORY;
     if (!lstrcmp(pszName, ".") || !lstrcmp(pszName, ".."))
@@ -330,7 +227,7 @@ int VBoxDnDBuildText(const char *pch, DWORD cch, void **ppv, DWORD *pcb)
     DWORD offSrc;
     DWORD offDst = 0;
 
-    pszAnsi = vboxDnDUtf8ToAnsi(pch, cch, '?');
+    pszAnsi = VBoxTrayUtf8ToAnsi(pch, cch, '?');
     if (!pszAnsi)
         return VERR_NO_MEMORY;
     for (offSrc = 0; pszAnsi[offSrc]; offSrc++)

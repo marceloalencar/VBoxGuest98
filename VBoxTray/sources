@@ -23,6 +23,8 @@ SOURCES= \
         DnDUtil.c \
         VMInfo.c \
         GuestProp.c \
+        GstCtrl.c \
+        GstCtrlFile.c \
         VbglR3.c \
         VBoxTray.rc
 

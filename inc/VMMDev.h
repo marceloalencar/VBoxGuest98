@@ -35,22 +35,40 @@
 #define VERR_NOT_IMPLEMENTED            (-12)
 #define VERR_WRONG_ORDER                (-22)
 #define VERR_NOT_SUPPORTED              (-37)
+#define VERR_ACCESS_DENIED              (-38)
 #define VERR_INTERRUPTED                (-39)
 #define VERR_TIMEOUT                    (-40)
 #define VERR_BUFFER_OVERFLOW            (-41)
 #define VERR_TOO_MUCH_DATA              (-42)
+#define VERR_TRY_AGAIN                  (-52)
 #define VERR_OUT_OF_RANGE               (-54)
 #define VERR_CANCELLED                  (-70)
 #define VERR_NOT_FOUND                  (-78)
+#define VERR_FILE_IO_ERROR              (-100)
 #define VERR_OPEN_FAILED                (-101)
+#define VERR_FILE_NOT_FOUND             (-102)
+#define VERR_ALREADY_EXISTS             (-105)
+#define VERR_TOO_MANY_OPEN_FILES        (-106)
+#define VERR_SEEK                       (-107)
+#define VERR_NEGATIVE_SEEK              (-108)
 #define VERR_PATH_NOT_FOUND             (-103)
 #define VERR_INVALID_NAME               (-104)
 #define VERR_READ_ERROR                 (-111)
 #define VERR_WRITE_ERROR                (-112)
+#define VERR_WRITE_PROTECT              (-113)
+#define VERR_SHARING_VIOLATION          (-114)
 #define VERR_FILENAME_TOO_LONG          (-120)
+#define VERR_DIR_NOT_EMPTY              (-125)
+#define VERR_NOT_A_DIRECTORY            (-126)
+#define VERR_IS_A_DIRECTORY             (-127)
+#define VERR_DISK_FULL                  (-152)
+#define VERR_NO_MORE_FILES              (-201)
 #define VERR_NO_DATA                    (-304)
 #define VERR_INTERNAL_ERROR             (-225)
+#define VERR_VM_RESTORED                (-1025)
+#define VERR_HGCM_SERVICE_NOT_FOUND     (-2900)
 #define VINF_BUFFER_OVERFLOW            (41)
+#define VINF_TRY_AGAIN                  (52)
 #define VINF_HGCM_ASYNC_EXECUTE         (2903)
 
 #define RT_SUCCESS(rc)                  ((int)(rc) >= VINF_SUCCESS)
@@ -881,6 +899,378 @@ typedef struct
 #define DND_PROGRESS_ERROR                              4
 /** @} */
 
+
+/*********************************************************************************************************************************
+*   Guest control HGCM service (used by VBoxTray)                                                                                *
+*********************************************************************************************************************************/
+
+#define VBOX_GUESTCTRL_SERVICE_NAME                     "VBoxGuestControlSvc"
+
+/** @name Context IDs: session (5 bits), object (11 bits), count (16 bits).
+ * @{ */
+#define VBOX_GUESTCTRL_CONTEXTID_MAKE_SESSION(uSession) ((UINT32)((uSession) & 0x1f) << 27)
+#define VBOX_GUESTCTRL_CONTEXTID_GET_SESSION(uContextID) (((uContextID) >> 27) & 0x1f)
+/** @} */
+
+/** @name Host messages (returned by GUEST_MSG_PEEK_WAIT, fetched with GUEST_MSG_GET).
+ * @{ */
+#define HOST_MSG_CANCEL_PENDING_WAITS                   0
+/** Parms: [0] context, [1] protocol, [2] user, [3] password, [4] domain
+ *  (buffers out), [5] flags. */
+#define HOST_MSG_SESSION_CREATE                         20
+/** Sent to the master and to the session.  Parms: [0] context, [1] flags. */
+#define HOST_MSG_SESSION_CLOSE                          21
+/** Parms (protocol 2): [0] context, [1] command, [2] flags, [3] argument
+ *  count, [4] arguments (Bourne shell quoted), [5] variable count, [6] size
+ *  of the environment, [7] environment, [8] time limit (ms), [9] priority,
+ *  [10] affinity count, [11] affinity, [12] working directory (only with
+ *  VBOX_GUESTCTRL_HF_0_PROCESS_CWD).  Buffers are out, strings UTF-8. */
+#define HOST_MSG_EXEC_CMD                               100
+#define HOST_MSG_EXEC_CMD_CPARMS                        12
+/** Parms: [0] context, [1] PID, [2] flags (GUEST_PROC_IN_FLAG_XXX), [3] data
+ *  (buffer out), [4] size of the data (VERR_BUFFER_OVERFLOW if bigger). */
+#define HOST_MSG_EXEC_SET_INPUT                         101
+/** Parms: [0] context, [1] PID, [2] handle (GUEST_PROC_OUT_H_XXX), [3] flags. */
+#define HOST_MSG_EXEC_GET_OUTPUT                        102
+/** Parms: [0] context, [1] PID. */
+#define HOST_MSG_EXEC_TERMINATE                         110
+/** Parms: [0] context, [1] PID, [2] flags, [3] timeout. */
+#define HOST_MSG_EXEC_WAIT_FOR                          120
+/** Parms: [0] context, [1] file name, [2] access ("r", "w", "r+", "a", ...),
+ *  [3] disposition ("ca", "ce", "oc", "oa", "oe", "ot"), [4] sharing
+ *  (buffers out), [5] creation mode, [6] offset (64bit).  The handle is
+ *  the context's object ID. */
+#define HOST_MSG_FILE_OPEN                              240
+/** Parms: [0] context, [1] handle. */
+#define HOST_MSG_FILE_CLOSE                             241
+/** Parms: [0] context, [1] handle, [2] bytes to read. */
+#define HOST_MSG_FILE_READ                              250
+/** Parms: [0] context, [1] handle, [2] offset (64bit), [3] bytes to read. */
+#define HOST_MSG_FILE_READ_AT                           251
+/** Parms: [0] context, [1] handle, [2] size, [3] data (buffer out). */
+#define HOST_MSG_FILE_WRITE                             260
+/** Parms: [0] context, [1] handle, [2] offset (64bit), [3] size, [4] data (buffer out). */
+#define HOST_MSG_FILE_WRITE_AT                          261
+/** Parms: [0] context, [1] handle, [2] GUEST_FILE_SEEKTYPE_XXX, [3] offset (64bit). */
+#define HOST_MSG_FILE_SEEK                              270
+/** Parms: [0] context, [1] handle. */
+#define HOST_MSG_FILE_TELL                              271
+/** Parms: [0] context, [1] handle, [2] new size (64bit). */
+#define HOST_MSG_FILE_SET_SIZE                          272
+/** Parms: [0] context, [1] file name.  Answered with GUEST_MSG_REPLY. */
+#define HOST_MSG_FILE_REMOVE                            273
+/** Parms: [0] context, [1] path, [2] filter, [3] flags, [4] attributes to
+ *  add, [5] read flags.  The handle is the context's object ID. */
+#define HOST_MSG_DIR_OPEN                               310
+/** Parms: [0] context, [1] handle. */
+#define HOST_MSG_DIR_CLOSE                              311
+/** Parms: [0] context, [1] handle. */
+#define HOST_MSG_DIR_READ                               312
+/** Parms: [0] context, [1] handle. */
+#define HOST_MSG_DIR_REWIND                             313
+/** Parms: [0] context, [1] path, [2] mode, [3] GSTCTL_CREATEDIRECTORY_F_XXX.
+ *  Answered with GUEST_MSG_REPLY. */
+#define HOST_MSG_DIR_CREATE                             314
+/** Parms: [0] context, [1] handle, [2] entries wanted, [3] flags. */
+#define HOST_MSG_DIR_LIST                               315
+/** Parms: [0] context, [1] path, [2] DIRREMOVEREC_FLAG_XXX.  Answered with
+ *  GUEST_MSG_REPLY. */
+#define HOST_MSG_DIR_REMOVE                             320
+/** Parms: [0] context, [1] source, [2] destination, [3] PATHRENAME_FLAG_XXX.
+ *  Answered with GUEST_MSG_REPLY. */
+#define HOST_MSG_PATH_RENAME                            330
+/** Parms: [0] context.  Answered with GUEST_MSG_REPLY, the path as payload. */
+#define HOST_MSG_PATH_USER_DOCUMENTS                    331
+#define HOST_MSG_PATH_USER_HOME                         332
+/** Parms: [0] context, [1] GUEST_SHUTDOWN_FLAG_XXX.  Answered with
+ *  GUEST_MSG_REPLY before shutting down. */
+#define HOST_MSG_SHUTDOWN                               333
+/** Parms: [0] context, [1] path, [2] attributes to add, [3] GSTCTL_PATH_F_XXX. */
+#define HOST_MSG_FS_OBJ_QUERY_INFO                      334
+/** Parms: [0] context, [1] template, [2] directory, [3] GSTCTL_CREATETEMP_F_XXX,
+ *  [4] mode. */
+#define HOST_MSG_FS_CREATE_TEMP                         335
+/** Parms: [0] context, [1] path. */
+#define HOST_MSG_FS_QUERY_INFO                          336
+/** Parms: [0] context, [1] flags.  Answered with GUEST_MSG_REPLY, the mount
+ *  points as payload, each zero terminated. */
+#define HOST_MSG_MOUNT_POINTS                           337
+/** @} */
+
+/** @name Guest functions.
+ * @{ */
+/** Cancels the caller's pending GUEST_MSG_PEEK_WAIT.  No parms. */
+#define GUEST_MSG_CANCEL                                2
+/** General answer.  Parms: [0] context, [1] type (0), [2] status, [3]
+ *  payload (buffer in). */
+#define GUEST_MSG_REPLY                                 11
+/** Waits for a host message.  Parms: [0] VM session ID (64bit in, 0 = no
+ *  restore check) / message (64bit out), [1] parameter count (32bit out).
+ *  VERR_VM_RESTORED (new session ID in [0]) after a restore. */
+#define GUEST_MSG_PEEK_WAIT                             7
+/** Fetches the message peeked at; parm [0] is its ID on input. */
+#define GUEST_MSG_GET                                   8
+/** Drops a message.  Parms: [0] status for the host (32bit), [1] message
+ *  ID (32bit, UINT32_MAX = the first one). */
+#define GUEST_MSG_SKIP                                  9
+/** Makes the caller the master (the root that handles sessions).  No parms. */
+#define GUEST_MSG_MAKE_ME_MASTER                        13
+/** Announces a session before its client accepts it (master only).  Parms:
+ *  [0] session ID (32bit), [1] one time key (buffer in, 64 to 16384 bytes). */
+#define GUEST_MSG_SESSION_PREPARE                       14
+/** Binds the caller to a prepared session.  Parms as GUEST_MSG_SESSION_PREPARE. */
+#define GUEST_MSG_SESSION_ACCEPT                        16
+/** Session status.  Parms: [0] context, [1] GUEST_SESSION_NOTIFYTYPE_XXX,
+ *  [2] result (32bit). */
+#define GUEST_MSG_SESSION_NOTIFY                        20
+/** Reports the guest features and gets the host's.  Parms: [0] features 0
+ *  (64bit in/out), [1] features 1 (64bit in, VBOX_GUESTCTRL_GF_1_MUST_BE_ONE,
+ *  comes back cleared). */
+#define GUEST_MSG_REPORT_FEATURES                       22
+/** Program output (answer to HOST_MSG_EXEC_GET_OUTPUT).  Parms: [0] context,
+ *  [1] PID, [2] handle, [3] flags, [4] data (buffer in, may be empty). */
+#define GUEST_MSG_EXEC_OUTPUT                           100
+/** Process status.  Parms: [0] context, [1] PID, [2] PROC_STS_XXX, [3] flags
+ *  (exit code or error status), [4] data (buffer in). */
+#define GUEST_MSG_EXEC_STATUS                           101
+/** Input status (answer to HOST_MSG_EXEC_SET_INPUT).  Parms: [0] context,
+ *  [1] PID, [2] INPUT_STS_XXX, [3] flags (status code on error), [4] bytes
+ *  written. */
+#define GUEST_MSG_EXEC_INPUT_STATUS                     102
+/** Directory answers.  Parms: [0] context, [1] GUEST_DIR_NOTIFYTYPE_XXX,
+ *  [2] status, then by type: OPEN [3] handle; READ [3] GSTCTLDIRENTRYEX,
+ *  [4] user, [5] groups (buffers in); LIST [3] entry count, [4] entries
+ *  (GSTCTLDIRENTRYLISTHDR, entry, user, groups each). */
+#define GUEST_MSG_DIR_NOTIFY                            230
+/** File answers.  Parms: [0] context, [1] GUEST_FILE_NOTIFYTYPE_XXX, [2]
+ *  status, then by type: OPEN [3] handle; READ_OFFSET [3] data, [4] new
+ *  offset (64bit); WRITE_OFFSET [3] bytes written, [4] new offset; SEEK,
+ *  TELL, SET_SIZE [3] offset or size (64bit). */
+#define GUEST_MSG_FILE_NOTIFY                           240
+/** File system answers.  Parms: [0] context, [1] GUEST_FS_NOTIFYTYPE_XXX,
+ *  [2] status, then by type: CREATE_TEMP [3] path; QUERY_OBJ_INFO [3]
+ *  GSTCTLFSOBJINFO, [4] user, [5] groups; QUERY_INFO [3] GSTCTLFSINFO. */
+#define GUEST_MSG_FS_NOTIFY                             241
+/** @} */
+
+/** @name GUEST_MSG_SESSION_NOTIFY types.
+ * @{ */
+#define GUEST_SESSION_NOTIFYTYPE_ERROR                  1
+#define GUEST_SESSION_NOTIFYTYPE_STARTED                11
+/** Terminated normally. */
+#define GUEST_SESSION_NOTIFYTYPE_TEN                    20
+/** @} */
+
+/** @name GUEST_MSG_EXEC_STATUS process states.
+ * @{ */
+#define PROC_STS_STARTED                                1
+/** Terminated normally, flags = exit code. */
+#define PROC_STS_TEN                                    2
+/** Terminated by the time limit. */
+#define PROC_STS_TOK                                    5
+/** Hit the time limit but couldn't be terminated. */
+#define PROC_STS_TOA                                    6
+/** Ended by the host or because the guest service stops. */
+#define PROC_STS_DWN                                    7
+/** Couldn't be started, flags = VBox status code. */
+#define PROC_STS_ERROR                                  8
+/** @} */
+
+/** @name GUEST_MSG_EXEC_INPUT_STATUS states.
+ * @{ */
+#define INPUT_STS_WRITTEN                               1
+#define INPUT_STS_ERROR                                 20
+/** The program has no input (any more). */
+#define INPUT_STS_TERMINATED                            21
+/** @} */
+
+/** HOST_MSG_EXEC_SET_INPUT flag: the last input, close the program's input. */
+#define GUEST_PROC_IN_FLAG_EOF                          (1U << 0)
+
+/** @name Output handles (HOST_MSG_EXEC_GET_OUTPUT).
+ * @{ */
+#define GUEST_PROC_OUT_H_STDOUT                         1
+#define GUEST_PROC_OUT_H_STDERR                         2
+/** @} */
+
+/** @name GUEST_MSG_DIR_NOTIFY types.
+ * @{ */
+#define GUEST_DIR_NOTIFYTYPE_OPEN                       10
+#define GUEST_DIR_NOTIFYTYPE_CLOSE                      20
+#define GUEST_DIR_NOTIFYTYPE_READ                       21
+#define GUEST_DIR_NOTIFYTYPE_REWIND                     22
+#define GUEST_DIR_NOTIFYTYPE_LIST                       23
+/** @} */
+
+/** @name GUEST_MSG_FILE_NOTIFY types.
+ * @{ */
+#define GUEST_FILE_NOTIFYTYPE_ERROR                     1
+#define GUEST_FILE_NOTIFYTYPE_OPEN                      10
+#define GUEST_FILE_NOTIFYTYPE_CLOSE                     20
+#define GUEST_FILE_NOTIFYTYPE_READ                      30
+#define GUEST_FILE_NOTIFYTYPE_READ_OFFSET               31
+#define GUEST_FILE_NOTIFYTYPE_WRITE                     40
+#define GUEST_FILE_NOTIFYTYPE_WRITE_OFFSET              41
+#define GUEST_FILE_NOTIFYTYPE_SEEK                      50
+#define GUEST_FILE_NOTIFYTYPE_TELL                      60
+#define GUEST_FILE_NOTIFYTYPE_SET_SIZE                  61
+/** @} */
+
+/** @name GUEST_MSG_FS_NOTIFY types.
+ * @{ */
+#define GUEST_FS_NOTIFYTYPE_CREATE_TEMP                 1
+#define GUEST_FS_NOTIFYTYPE_QUERY_OBJ_INFO              2
+#define GUEST_FS_NOTIFYTYPE_QUERY_INFO                  3
+/** @} */
+
+/** @name HOST_MSG_FILE_SEEK methods.
+ * @{ */
+#define GUEST_FILE_SEEKTYPE_BEGIN                       1
+#define GUEST_FILE_SEEKTYPE_CURRENT                     4
+#define GUEST_FILE_SEEKTYPE_END                         8
+/** @} */
+
+/** @name File operation flags.
+ * @{ */
+#define GSTCTL_CREATEDIRECTORY_F_PARENTS                (1U << 0)
+#define DIRREMOVEREC_FLAG_RECURSIVE                     (1U << 0)
+#define DIRREMOVEREC_FLAG_CONTENT_AND_DIR               (1U << 1)
+#define DIRREMOVEREC_FLAG_CONTENT_ONLY                  (1U << 2)
+#define PATHRENAME_FLAG_REPLACE                         (1U << 0)
+#define GSTCTL_CREATETEMP_F_DIRECTORY                   (1U << 0)
+#define GUEST_SHUTDOWN_FLAG_POWER_OFF                   (1U << 0)
+#define GUEST_SHUTDOWN_FLAG_REBOOT                      (1U << 1)
+#define GUEST_SHUTDOWN_FLAG_FORCE                       (1U << 2)
+/** @} */
+
+/** @name GSTCTLFSOBJATTR::fMode bits (RTFS_XXX).
+ * @{ */
+#define RTFS_UNIX_ALL_ACCESS_PERMS                      0000777U
+#define RTFS_TYPE_DIRECTORY                             0040000U
+#define RTFS_TYPE_FILE                                  0100000U
+/** The DOS attributes (FILE_ATTRIBUTE_XXX) are kept shifted by this. */
+#define RTFS_DOS_SHIFT                                  16
+/** @} */
+
+/** @name GSTCTLFSOBJATTR::enmAdditional values.
+ * @{ */
+#define GSTCTLFSOBJATTRADD_NOTHING                      1
+#define GSTCTLFSOBJATTRADD_UNIX                         2
+/** @} */
+
+/** File system object attributes (RTFSOBJATTR). */
+typedef struct GSTCTLFSOBJATTR
+{
+    /** RTFS_TYPE_XXX, RTFS_UNIX_XXX and the DOS attributes. */
+    UINT32 fMode;
+    /** GSTCTLFSOBJATTRADD_XXX. */
+    UINT32 enmAdditional;
+    union
+    {
+        /** GSTCTLFSOBJATTRADD_UNIX. */
+        struct
+        {
+            UINT32 uid;
+            UINT32 gid;
+            UINT32 cHardlinks;
+            UINT32 INodeIdDevice;
+            UINT64 INodeId;
+            UINT32 fFlags;
+            UINT32 GenerationId;
+            UINT32 Device;
+        } Unix;
+        UCHAR  abReserveSpace[128];
+    } u;
+} GSTCTLFSOBJATTR;
+
+/** File system object information (RTFSOBJINFO); times are nanoseconds
+ *  since 1970-01-01 UTC (RTTIMESPEC). */
+typedef struct GSTCTLFSOBJINFO
+{
+    INT64 cbObject;
+    INT64 cbAllocated;
+    INT64 AccessTime;
+    INT64 ModificationTime;
+    INT64 ChangeTime;
+    INT64 BirthTime;
+    GSTCTLFSOBJATTR Attr;
+} GSTCTLFSOBJINFO;
+
+#pragma pack(push, 1)
+/** Directory entry (RTDIRENTRYEX); sent only up to the name's terminator. */
+typedef struct GSTCTLDIRENTRYEX
+{
+    GSTCTLFSOBJINFO Info;
+    /** Length of the 8.3 name in UTF-16 units. */
+    USHORT cwcShortName;
+    WCHAR  wszShortName[14];
+    /** Length of the name (UTF-8), without the terminator. */
+    USHORT cbName;
+    char   szName[260];
+} GSTCTLDIRENTRYEX;
+
+/** Header of each entry of a HOST_MSG_DIR_LIST answer. */
+typedef struct GSTCTLDIRENTRYLISTHDR
+{
+    UINT32 cbDirEntryEx;
+    /** Sizes of the user and groups strings, terminators included. */
+    UINT32 cbUser;
+    UINT32 cbGroups;
+} GSTCTLDIRENTRYLISTHDR;
+
+/** File system information (HOST_MSG_FS_QUERY_INFO); sent with the mount
+ *  point appended. */
+typedef struct GSTCTLFSINFO
+{
+    UINT64 cbFree;
+    UINT64 cbTotalSize;
+    UINT32 cbBlockSize;
+    UINT32 cbSectorSize;
+    UINT32 uSerialNumber;
+    UINT32 fFlags;
+    UINT32 fFeatures;
+    UINT32 cMaxComponent;
+    char   szName[255];
+    char   szLabel[255];
+    USHORT cbMountpoint;
+    char   szMountpoint[1];
+} GSTCTLFSINFO;
+#pragma pack(pop)
+
+/** @name HOST_MSG_EXEC_CMD flags.
+ * @{ */
+#define GUEST_PROC_CREATE_FLAG_HIDDEN                   (1U << 2)
+/** The host reads the standard output / error. */
+#define GUEST_PROC_CREATE_FLAG_WAIT_STDOUT              (1U << 4)
+#define GUEST_PROC_CREATE_FLAG_WAIT_STDERR              (1U << 5)
+/** The arguments are passed as given, not Bourne shell quoted. */
+#define GUEST_PROC_CREATE_FLAG_UNQUOTED_ARGS            (1U << 7)
+/** @} */
+
+/** @name Feature bits (GUEST_MSG_REPORT_FEATURES), 64bit.
+ * @{ */
+/** Guest: handles HOST_MSG_FILE_SET_SIZE. */
+#define VBOX_GUESTCTRL_GF_0_SET_SIZE                    ((UINT64)1 << 0)
+/** Guest: handles HOST_MSG_SHUTDOWN. */
+#define VBOX_GUESTCTRL_GF_0_SHUTDOWN                    ((UINT64)1 << 3)
+/** Guest: the arguments start with argv[0]. */
+#define VBOX_GUESTCTRL_GF_0_PROCESS_ARGV0               ((UINT64)1 << 1)
+/** Guest: handles the file, directory and file system messages itself,
+ *  instead of the host running toolbox commands (vbox_ls, vbox_stat, ...). */
+#define VBOX_GUESTCTRL_GF_0_TOOLBOX_AS_CMDS             ((UINT64)1 << 4)
+/** Guest: HOST_MSG_EXEC_CMD may carry a working directory. */
+#define VBOX_GUESTCTRL_GF_0_PROCESS_CWD                 ((UINT64)1 << 5)
+/** Guest: handles HOST_MSG_MOUNT_POINTS. */
+#define VBOX_GUESTCTRL_GF_0_MOUNT_POINTS_ENUM           ((UINT64)1 << 6)
+#define VBOX_GUESTCTRL_GF_1_MUST_BE_ONE                 ((UINT64)1 << 63)
+/** Host: sends argv[0] as the first argument. */
+#define VBOX_GUESTCTRL_HF_0_PROCESS_ARGV0               ((UINT64)1 << 1)
+/** Host: understands GUEST_FILE_NOTIFYTYPE_READ_OFFSET / _WRITE_OFFSET. */
+#define VBOX_GUESTCTRL_HF_0_NOTIFY_RDWR_OFFSET          ((UINT64)1 << 0)
+/** Host: sends the working directory. */
+#define VBOX_GUESTCTRL_HF_0_PROCESS_CWD                 ((UINT64)1 << 2)
+/** @} */
+
 #pragma pack(pop)
 
 /** Compile time size check (C89: a negative array size fails to compile). */
@@ -905,6 +1295,12 @@ VMMDEV_ASSERT_SIZE(VMMDevDisplayChangeRequestEx, 24+32);
 VMMDEV_ASSERT_SIZE(VMMDevSeamlessChangeRequest, 24+8);
 VMMDEV_ASSERT_SIZE(RTRECT, 16);
 VMMDEV_ASSERT_SIZE(VMMDevVideoSetVisibleRegion, 24+4+16);
+/* Sizes from the AssertCompileSize statements in include/VBox/GuestHost/GuestControl.h. */
+VMMDEV_ASSERT_SIZE(GSTCTLFSOBJATTR, 136);
+VMMDEV_ASSERT_SIZE(GSTCTLFSOBJINFO, 184);
+VMMDEV_ASSERT_SIZE(GSTCTLDIRENTRYEX, 184+292);
+VMMDEV_ASSERT_SIZE(GSTCTLDIRENTRYLISTHDR, 12);
+VMMDEV_ASSERT_SIZE(GSTCTLFSINFO, 553);
 VMMDEV_ASSERT_SIZE(VBoxGuestStatistics, 19*4);
 VMMDEV_ASSERT_SIZE(VMMDevReportGuestStats, 24+19*4);
 VMMDEV_ASSERT_SIZE(VMMDevGetStatisticsChangeRequest, 24+8);
