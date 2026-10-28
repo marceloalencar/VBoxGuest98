@@ -11,8 +11,6 @@
  *
  * User mode: include <windows.h> and <winioctl.h> before this header.
  * Kernel mode: include <wdm.h> before this header.
- * Exactly one translation unit must include <initguid.h> first in order to
- * instantiate GUID_DEVINTERFACE_VBOXGUEST98.
  */
 
 #ifndef VBOXGUEST98_H
@@ -48,11 +46,8 @@
 #define VBOXGUEST98_DEVICE_NAME_NT      L"\\Device\\VBoxGuest"
 /** DOS device name (symbolic link). */
 #define VBOXGUEST98_DEVICE_NAME_DOS     L"\\DosDevices\\VBoxGuest"
-
-/** Device interface GUID, used by user mode to locate the device with SetupDi.
- *  {719B4B48-C5DF-4474-A8E7-AF615CA3BC83} */
-DEFINE_GUID(GUID_DEVINTERFACE_VBOXGUEST98,
-            0x719b4b48, 0xc5df, 0x4474, 0xa8, 0xe7, 0xaf, 0x61, 0x5c, 0xa3, 0xbc, 0x83);
+/** Name user mode opens the device by, like upstream VBOXGUEST_DEVICE_NAME. */
+#define VBOXGUEST98_DEVICE_NAME         "\\\\.\\VBoxGuest"
 
 /** Special timeout value: wait forever. */
 #define VBOXGUEST98_WAIT_INFINITE       (0xffffffffU)

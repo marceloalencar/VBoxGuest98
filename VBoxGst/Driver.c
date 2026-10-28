@@ -3,7 +3,6 @@
  */
 
 #include <wdm.h>
-#include <initguid.h>   /* Instantiates GUID_DEVINTERFACE_VBOXGUEST98 in this file. */
 #include "VBoxGst.h"
 
 
@@ -117,12 +116,6 @@ static NTSTATUS NTAPI vgdrvWinAddDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT p
             pDevExt->pNextLowerDriver = IoAttachDeviceToDeviceStack(pDeviceObject, pPdo);
             if (pDevExt->pNextLowerDriver)
             {
-                /* The device interface is how user mode finds us on Windows 98
-                   (VBoxTray), failure is not fatal. */
-                rcNt = IoRegisterDeviceInterface(pPdo, &GUID_DEVINTERFACE_VBOXGUEST98, NULL, &pDevExt->InterfaceName);
-                if (!NT_SUCCESS(rcNt))
-                    pDevExt->InterfaceName.Buffer = NULL;
-
                 IoInitializeDpcRequest(pDeviceObject, vgdrvWinDpcHandler);
 
                 /* Ensure we are not called at elevated IRQL, even if our code isn't pagable any more. */
@@ -156,13 +149,6 @@ void vgdrvWinDeleteDevice(PVBOXGUESTDEVEXTWIN pDevExt)
 {
     UNICODE_STRING DosName;
     PDEVICE_OBJECT pDeviceObject = pDevExt->pDeviceObject;
-
-    if (pDevExt->InterfaceName.Buffer)
-    {
-        IoSetDeviceInterfaceState(&pDevExt->InterfaceName, FALSE);
-        RtlFreeUnicodeString(&pDevExt->InterfaceName);
-        pDevExt->InterfaceName.Buffer = NULL;
-    }
 
     RtlInitUnicodeString(&DosName, VBOXGUEST98_DEVICE_NAME_DOS);
     IoDeleteSymbolicLink(&DosName);

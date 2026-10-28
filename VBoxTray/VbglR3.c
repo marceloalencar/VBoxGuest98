@@ -11,8 +11,6 @@
 
 #include <windows.h>
 #include <winioctl.h>
-#include <initguid.h>   /* Instantiates GUID_DEVINTERFACE_VBOXGUEST98 in this file. */
-#include <setupapi.h>
 #include "VBoxTray.h"
 
 #include <stdlib.h>
@@ -20,7 +18,7 @@
 
 
 /**
- * Opens the VBoxGuest device through its device interface.
+ * Opens the VBoxGuest device by name, like the official Guest Additions.
  *
  * @returns Device handle, INVALID_HANDLE_VALUE on failure.
  */
@@ -38,34 +36,8 @@ HANDLE VbglR3Open(void)
  */
 HANDLE VbglR3OpenEx(BOOL fOverlapped)
 {
-    HANDLE hDevice = INVALID_HANDLE_VALUE;
-    SP_INTERFACE_DEVICE_DATA IfData;
-    PSP_INTERFACE_DEVICE_DETAIL_DATA pIfDetail;
-    HDEVINFO hInfo;
-    DWORD cbDetail = 0;
-
-    hInfo = SetupDiGetClassDevs(&GUID_DEVINTERFACE_VBOXGUEST98, NULL, NULL, DIGCF_PRESENT | DIGCF_INTERFACEDEVICE);
-    if (hInfo == INVALID_HANDLE_VALUE)
-        return INVALID_HANDLE_VALUE;
-
-    IfData.cbSize = sizeof(IfData);
-    if (SetupDiEnumDeviceInterfaces(hInfo, NULL, &GUID_DEVINTERFACE_VBOXGUEST98, 0, &IfData))
-    {
-        SetupDiGetDeviceInterfaceDetail(hInfo, &IfData, NULL, 0, &cbDetail, NULL);
-        pIfDetail = (PSP_INTERFACE_DEVICE_DETAIL_DATA)malloc(cbDetail);
-        if (pIfDetail)
-        {
-            pIfDetail->cbSize = sizeof(SP_INTERFACE_DEVICE_DETAIL_DATA);
-            if (SetupDiGetDeviceInterfaceDetail(hInfo, &IfData, pIfDetail, cbDetail, NULL, NULL))
-                hDevice = CreateFile(pIfDetail->DevicePath, GENERIC_READ | GENERIC_WRITE,
-                                     FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
-                                     FILE_ATTRIBUTE_NORMAL | (fOverlapped ? FILE_FLAG_OVERLAPPED : 0), NULL);
-            free(pIfDetail);
-        }
-    }
-
-    SetupDiDestroyDeviceInfoList(hInfo);
-    return hDevice;
+    return CreateFileA(VBOXGUEST98_DEVICE_NAME, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                       NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | (fOverlapped ? FILE_FLAG_OVERLAPPED : 0), NULL);
 }
 
 /**

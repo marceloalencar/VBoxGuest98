@@ -219,9 +219,6 @@ typedef struct VBOXGUESTDEVEXTWIN
     ULONG cbVmmDevMemory;
     /** Kernel mapping of the VMMDev memory (MmMapIoSpace). */
     PVOID pvMMIOBase;
-
-    /** Symbolic link name of the registered device interface. */
-    UNICODE_STRING InterfaceName;
 } VBOXGUESTDEVEXTWIN;
 typedef VBOXGUESTDEVEXTWIN *PVBOXGUESTDEVEXTWIN;
 

@@ -258,8 +258,6 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PIRP pIrp)
         {
             VGDrvLogRel("started: I/O port %#x, IRQ level %u\n", pDevExt->uIoPortPhysAddr.LowPart,
                         pDevExt->uInterruptLevel);
-            if (pDevExt->InterfaceName.Buffer)
-                IoSetDeviceInterfaceState(&pDevExt->InterfaceName, TRUE);
             pDevExt->enmDevState = VGDRVWINDEVSTATE_STARTED;
             return STATUS_SUCCESS;
         }
@@ -281,9 +279,6 @@ static NTSTATUS vgdrvWinSetupDevice(PVBOXGUESTDEVEXTWIN pDevExt, PIRP pIrp)
  */
 static void vgdrvWinDeleteDeviceResources(PVBOXGUESTDEVEXTWIN pDevExt)
 {
-    if (pDevExt->enmDevState == VGDRVWINDEVSTATE_STARTED && pDevExt->InterfaceName.Buffer)
-        IoSetDeviceInterfaceState(&pDevExt->InterfaceName, FALSE);
-
     if (pDevExt->pInterruptObject)
     {
         IoDisconnectInterrupt(pDevExt->pInterruptObject);
