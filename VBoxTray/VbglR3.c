@@ -446,3 +446,54 @@ int VbglR3GetDisplayChangeRequest(HANDLE hDevice, UINT32 *pcx, UINT32 *pcy, UINT
     }
     return rc;
 }
+
+/**
+ * Gets the seamless mode the host wants (as upstream VbglR3SeamlessGetLastEvent).
+ *
+ * @returns VBox status code.
+ * @param   hDevice     The device handle.
+ * @param   penmMode    Where to return the mode (VMMDevSeamlessMode).
+ * @param   fAck        Whether this answers VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST.
+ */
+int VbglR3SeamlessGetMode(HANDLE hDevice, UINT32 *penmMode, BOOL fAck)
+{
+    VMMDevSeamlessChangeRequest Req;
+    int rc;
+
+    vbglR3GRInit(&Req.header, sizeof(Req), VMMDevReq_GetSeamlessChangeRequest);
+    if (fAck)
+        Req.eventAck = VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST;
+    rc = vbglR3GRPerform(hDevice, &Req.header);
+    if (RT_SUCCESS(rc))
+        *penmMode = Req.mode;
+    return rc;
+}
+
+/**
+ * Sends the visible region for seamless mode (as upstream VbglR3SeamlessSendRects).
+ *
+ * @returns VBox status code.
+ * @param   hDevice     The device handle.
+ * @param   paRects     The rectangles, in guest screen pixels.
+ * @param   cRects      Number of rectangles, at least 1; the request must fit
+ *                      in VBOXGUEST98_MAX_VMMDEV_REQUEST_SIZE.
+ */
+int VbglR3SeamlessSendRects(HANDLE hDevice, const RTRECT *paRects, UINT32 cRects)
+{
+    VMMDevVideoSetVisibleRegion *pReq;
+    UINT32 cbReq;
+    int rc;
+
+    if (!cRects || cRects > (VBOXGUEST98_MAX_VMMDEV_REQUEST_SIZE - VMMDEV_VISIBLE_REGION_SIZE(0)) / sizeof(RTRECT))
+        return VERR_INVALID_PARAMETER;
+    cbReq = VMMDEV_VISIBLE_REGION_SIZE(cRects);
+    pReq = (VMMDevVideoSetVisibleRegion *)malloc(cbReq);
+    if (!pReq)
+        return VERR_NO_MEMORY;
+    vbglR3GRInit(&pReq->header, cbReq, VMMDevReq_VideoSetVisibleRegion);
+    pReq->cRect = cRects;
+    memcpy(pReq->Rect, paRects, cRects * sizeof(RTRECT));
+    rc = vbglR3GRPerform(hDevice, &pReq->header);
+    free(pReq);
+    return rc;
+}

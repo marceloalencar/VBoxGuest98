@@ -70,6 +70,7 @@ static VBOXTRAYSERVICE g_aServices[] =
     { "Clipboard", VBoxClipboardInit, VBoxClipboardThread, VBoxClipboardStop, NULL },
     { "Stats",     NULL,              VBoxStatsThread,     NULL,              NULL },
     { "Display",   NULL,              VBoxDisplayThread,   NULL,              NULL },
+    { "Seamless",  NULL,              VBoxSeamlessThread,  NULL,              NULL },
     { "DnD",       VBoxDnDInit,       VBoxDnDThread,       VBoxDnDStop,       NULL },
     { "VMInfo",    VBoxVMInfoInit,    VBoxVMInfoThread,    VBoxVMInfoStop,    NULL },
 };

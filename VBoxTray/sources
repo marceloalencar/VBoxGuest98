@@ -15,6 +15,7 @@ SOURCES= \
         Clipboard.c \
         Stats.c \
         Display.c \
+        Seamless.c \
         DnD.c \
         DnDObj.c \
         DnDHgcm.c \

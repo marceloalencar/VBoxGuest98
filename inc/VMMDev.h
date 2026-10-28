@@ -481,6 +481,52 @@ typedef struct
     UCHAR   abPadding[2];
 } VMMDevDisplayChangeRequestEx;
 
+/** Seamless modes (VMMDevSeamlessChangeRequest::mode). */
+typedef enum VMMDevSeamlessMode
+{
+    /** Normal mode, the whole guest screen is shown. */
+    VMMDev_Seamless_Disabled            = 0,
+    /** Only the visible region reported by the guest is shown. */
+    VMMDev_Seamless_Visible_Region      = 1,
+    /** Each guest window in its own host window (not used by the Windows guests). */
+    VMMDev_Seamless_Host_Window         = 2,
+    VMMDev_Seamless_SizeHack            = 0x7fffffff
+} VMMDevSeamlessMode;
+
+/** Seamless mode the host wants (VMMDevReq_GetSeamlessChangeRequest). */
+typedef struct VMMDevSeamlessChangeRequest
+{
+    VMMDevRequestHeader header;
+    /** OUT: The mode (VMMDevSeamlessMode). */
+    UINT32 mode;
+    /** IN: VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST when answering that event. */
+    UINT32 eventAck;
+} VMMDevSeamlessChangeRequest;
+
+/** Rectangle in guest screen pixels, right and bottom exclusive (RTRECT). */
+typedef struct RTRECT
+{
+    INT32 xLeft;
+    INT32 yTop;
+    INT32 xRight;
+    INT32 yBottom;
+} RTRECT;
+
+/** Visible region for seamless mode (VMMDevReq_VideoSetVisibleRegion).  The
+ *  request is sized for cRect rectangles: header.size =
+ *  VMMDEV_VISIBLE_REGION_SIZE(cRect). */
+typedef struct VMMDevVideoSetVisibleRegion
+{
+    VMMDevRequestHeader header;
+    /** IN: Number of rectangles. */
+    UINT32 cRect;
+    /** IN: The rectangles, cRect of them. */
+    RTRECT Rect[1];
+} VMMDevVideoSetVisibleRegion;
+
+/** Size of a VMMDevVideoSetVisibleRegion request with cRect rectangles. */
+#define VMMDEV_VISIBLE_REGION_SIZE(cRect)   (24 + 4 + (cRect) * 16)
+
 /** Guest statistics (VMMDevReq_ReportGuestStats).  Memory sizes are in 4KB
  *  pages, loads in percent (0-100) over the last interval. */
 typedef struct VBoxGuestStatistics
@@ -856,6 +902,9 @@ VMMDEV_ASSERT_SIZE(VMMDevReportGuestStatus, 24+12);
 VMMDEV_ASSERT_SIZE(VMMDevPowerStateRequest, 24+4);
 VMMDEV_ASSERT_SIZE(VMMDevReqHeartbeat, 24+12);
 VMMDEV_ASSERT_SIZE(VMMDevDisplayChangeRequestEx, 24+32);
+VMMDEV_ASSERT_SIZE(VMMDevSeamlessChangeRequest, 24+8);
+VMMDEV_ASSERT_SIZE(RTRECT, 16);
+VMMDEV_ASSERT_SIZE(VMMDevVideoSetVisibleRegion, 24+4+16);
 VMMDEV_ASSERT_SIZE(VBoxGuestStatistics, 19*4);
 VMMDEV_ASSERT_SIZE(VMMDevReportGuestStats, 24+19*4);
 VMMDEV_ASSERT_SIZE(VMMDevGetStatisticsChangeRequest, 24+8);

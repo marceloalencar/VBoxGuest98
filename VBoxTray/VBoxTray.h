@@ -8,6 +8,7 @@
  *  - Clipboard.c  Shared clipboard (text, images, HTML).
  *  - Stats.c      Guest statistics (memory, processes, CPU load).
  *  - Display.c    Resizing the guest display to the host window.
+ *  - Seamless.c   Seamless mode (visible region of the guest windows).
  *  - DnD.c        Drag and drop between the host and the guest (DnDHgcm.c:
  *                 its HGCM calls, DnDTransfer.c: transfers, DnDUtil.c: text
  *                 conversions, DnDObj.c: OLE objects).
@@ -68,6 +69,8 @@ int    VbglR3StatReport(HANDLE hDevice, const VBoxGuestStatistics *pStats);
 int    VbglR3ChangeGuestCapabilities(HANDLE hDevice, UINT32 fOrMask, UINT32 fNotMask);
 int    VbglR3GetDisplayChangeRequest(HANDLE hDevice, UINT32 *pcx, UINT32 *pcy, UINT32 *pcBits, UINT32 *piDisplay,
                                      BOOL *pfEnabled, BOOL fAck);
+int    VbglR3SeamlessGetMode(HANDLE hDevice, UINT32 *penmMode, BOOL fAck);
+int    VbglR3SeamlessSendRects(HANDLE hDevice, const RTRECT *paRects, UINT32 cRects);
 
 
 /*********************************************************************************************************************************
@@ -89,6 +92,7 @@ unsigned __stdcall VBoxMouseThread(void *pvUser);
 unsigned __stdcall VBoxTimeSyncThread(void *pvUser);
 unsigned __stdcall VBoxStatsThread(void *pvUser);
 unsigned __stdcall VBoxDisplayThread(void *pvUser);
+unsigned __stdcall VBoxSeamlessThread(void *pvUser);
 
 void     VBoxClipboardInit(void);
 void     VBoxClipboardStop(void);

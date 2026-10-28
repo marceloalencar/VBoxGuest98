@@ -284,7 +284,10 @@ static void vboxDisplayResize(DWORD cx, DWORD cy)
         cx = Current.dmPelsWidth;
     if (!cy)
         cy = Current.dmPelsHeight;
-    cx &= ~7U; /* Keep the width a multiple of 8, like the VirtualBox video drivers. */
+    /* Keep the width even: the display driver makes odd widths even anyway.
+       Rounding down further would leave dark strips at both sides in seamless
+       mode, where the host centers a narrower guest screen. */
+    cx &= ~1U;
     if (cx == Current.dmPelsWidth && cy == Current.dmPelsHeight)
         return;
 

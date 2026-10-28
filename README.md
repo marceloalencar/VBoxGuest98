@@ -12,6 +12,7 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 - Shared clipboard
 - Guest statistics
 - Display resizing ("Auto-resize Guest Display")
+- Seamless mode
 - Drag and drop between the host and the guest
 - Guest properties: OS version, logged in user and network adapters (IP, MAC),
   shown in the VM's session information and `VBoxManage guestproperty enumerate`
@@ -46,6 +47,7 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/Clipboard.c` | Shared clipboard (text, images, HTML) |
 | `VBoxTray/Stats.c` | Guest statistics |
 | `VBoxTray/Display.c` | Display resizing |
+| `VBoxTray/Seamless.c` | Seamless mode (visible region of the guest windows) |
 | `VBoxTray/DnD.c` | Drag and drop: proxy window and worker thread |
 | `VBoxTray/DnDHgcm.c` | Drag and drop HGCM protocol calls |
 | `VBoxTray/DnDTransfer.c` | Drag and drop transfers: receiving and sending files and text |
@@ -56,10 +58,6 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode, HGCM call builder |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 | `installer/VBoxGuest98.nsi` | Installer and uninstaller (NSIS 2.46) |
-
-# Todo:
-
-**VBoxTray**: Seamless mode.
 
 # Compiling:
 Microsoft Visual C++ 6.0
