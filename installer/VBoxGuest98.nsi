@@ -1,7 +1,7 @@
 ; VBoxGuest98 installer for Windows 98/ME (NSIS 2.46).
 ;
 ; Build from this folder with "makensis VBoxGuest98.nsi" after a free build
-; (build.cmd does it).  Define OBJDIR=objchk to package a checked build.
+; (build.cmd does it).  Define BUILDTYPE=checked to package a checked build.
 ;
 ; Windows 98/ME can't install a driver programmatically from 32-bit code, so the
 ; installer preinstalls it, as the Oney WDM book suggests for these systems:
@@ -21,8 +21,8 @@
 !include FileFunc.nsh
 !include MUI2.nsh
 
-!ifndef OBJDIR
-  !define OBJDIR "objfre"
+!ifndef BUILDTYPE
+  !define BUILDTYPE "free"
 !endif
 
 ; VBoxGuest98's own version from the shared header, e.g. 0.1.0.
@@ -47,7 +47,7 @@
 !define TRAY_MUTEX      "VBoxTray98SingleInstance"
 
 Name "${PRODUCT} ${VBG_VERSION}"
-!if "${OBJDIR}" == "objchk"
+!if "${BUILDTYPE}" == "checked"
   OutFile "obj\${PRODUCT}-${VBG_VERSION}-checked.exe"
 !else
   OutFile "obj\${PRODUCT}-${VBG_VERSION}.exe"
@@ -222,9 +222,9 @@ Section "${PRODUCT}" SecMain
 
   Call CloseVBoxTray
 
-  !insertmacro INSTALL_FILE "..\VBoxGst\${OBJDIR}\i386\VBoxGst.sys" "$WINDIR\SYSTEM32\DRIVERS" "VBoxGst.sys" "VBOXGST.NEW"
-  !insertmacro INSTALL_FILE "..\VBoxTray\${OBJDIR}\i386\VBoxTray.exe" "$SYSDIR" "VBoxTray.exe" "VBOXTRAY.NEW"
-  !insertmacro INSTALL_FILE "..\VBoxMou\${OBJDIR}\i386\VBoxMou.vxd" "$SYSDIR" "VBoxMou.vxd" "VBOXMOU.NEW"
+  !insertmacro INSTALL_FILE "..\VBoxGst\obj\i386\${BUILDTYPE}\VBoxGst.sys" "$WINDIR\SYSTEM32\DRIVERS" "VBoxGst.sys" "VBOXGST.NEW"
+  !insertmacro INSTALL_FILE "..\VBoxTray\obj\i386\${BUILDTYPE}\VBoxTray.exe" "$SYSDIR" "VBoxTray.exe" "VBOXTRAY.NEW"
+  !insertmacro INSTALL_FILE "..\VBoxMou\obj\i386\${BUILDTYPE}\VBoxMou.vxd" "$SYSDIR" "VBoxMou.vxd" "VBOXMOU.NEW"
 
   SetOutPath "$WINDIR\INF\OTHER"
   File "/oname=${INF_NAME}" "obj\VBoxGst.inf"

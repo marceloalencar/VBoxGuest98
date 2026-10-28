@@ -64,13 +64,11 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 # Compiling:
 Microsoft Visual C++ 6.0
 
-Microsoft Windows 2000 DDK
-
-Microsoft Windows 98 DDK (assembler and linker for the VxD)
+Microsoft Windows 98 DDK
 
 [NSIS 2.46](https://sourceforge.net/projects/nsis/files/NSIS%202/2.46/) (optional)
 
 Run `build.cmd` (free build) or `build.cmd checked` in this folder. It expects
-Visual C++ in `C:\MSVC600`, the Windows 2000 DDK in `C:\NTDDK`, the Windows 98
-DDK in `C:\98DDK` and NSIS in `C:\NSIS246`; set `MSVC6DIR`, `DDKDIR`,
-`DDK98DIR` and `NSIS2DIR` to use other locations.
+Visual C++ in `C:\MSVC600`, the Windows 98 DDK in `C:\98DDK` and NSIS in
+`C:\NSIS246`; set `MSVC6DIR`, `DDK98DIR` and `NSIS2DIR` to use other
+locations.

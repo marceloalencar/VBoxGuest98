@@ -4,7 +4,9 @@ TARGETTYPE=PROGRAM
 UMTYPE=windows
 UMENTRY=winmain
 
-INCLUDES=..\inc
+# The Windows 98 DDK puts its old SDK headers first; the shell tray icon and
+# OLE drag and drop need the Visual C++ 6.0 ones.
+INCLUDES=..\inc;$(MSVCDIR)\include
 
 SOURCES= \
         VBoxTray.c \
@@ -24,10 +26,10 @@ SOURCES= \
         VBoxTray.rc
 
 TARGETLIBS= \
-        $(SDK_LIB_PATH)\ole32.lib \
+        $(MSVCDIR)\lib\ole32.lib \
         $(SDK_LIB_PATH)\shell32.lib \
         $(SDK_LIB_PATH)\user32.lib \
-        $(SDK_LIB_PATH)\uuid.lib
+        $(MSVCDIR)\lib\uuid.lib
 
 LIB=$(MSVCDIR)\lib
 INCLUDE=$(MSVCDIR)\include
@@ -37,3 +39,5 @@ MSC_WARNING_LEVEL=/W3 /WX
 USER_C_FLAGS=/MT
 C_DEFINES=/DW32
 USE_MSVCRT=1
+# The Windows 98 DDK has no coffbase.txt to look the base address up in.
+UMBASE=0x400000

@@ -16,6 +16,9 @@
 #define VBOXGST_H
 
 #include <wdm.h>
+#ifndef MAXULONG_PTR /* The Windows 98 DDK predates the pointer sized types. */
+typedef ULONG ULONG_PTR, *PULONG_PTR;
+#endif
 
 #include "VBoxGuest98.h"
 

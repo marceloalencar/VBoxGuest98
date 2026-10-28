@@ -6,7 +6,7 @@
  * include/VBox/HostServices/VBoxClipboardSvc.h,
  * include/VBox/GuestHost/SharedClipboard.h, include/VBox/err.h and
  * include/iprt/err.h from VirtualBox 7.2.22 (r175245), rewritten in C89 so it
- * builds with Visual C++ 6.0 and the Windows 2000 DDK.  Values and structure
+ * builds with Visual C++ 6.0 and the Windows 98 DDK.  Values and structure
  * sizes were checked against those headers; the sizes are also enforced at
  * compile time at the end of this file.
  *
