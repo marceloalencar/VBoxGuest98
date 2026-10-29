@@ -12,15 +12,19 @@
  * the mouse from VMOUSE, which only hears from the mouse drivers.  So when
  * VBOXMOU.VXD is available every move is also posted to VMOUSE as a
  * relative move in pixels.  VMOUSE then moves the Windows pointer too, with
- * USER's acceleration, so when Windows has the mouse the absolute position
- * follows right away with mouse_event, which DirectInput and MS-DOS don't
- * see.  When a full screen MS-DOS program has the mouse, the VxD puts its
+ * USER's acceleration, so the move posted is the one USER accelerates to
+ * the host's (what a real mouse would have sent; DirectInput gets that one
+ * too), and when Windows has the mouse the absolute position follows right
+ * away with mouse_event, which DirectInput and MS-DOS don't see, for what
+ * is left (rounding).  Without the compensation the pointer overshot and
+ * came back on every fast move.  When a full screen MS-DOS program has the mouse, the VxD puts its
  * INT 33h pointer at the host position instead, as the program counts the
  * relative moves its own way.  Should either pointer still end up
  * elsewhere, it is put back once the movement settles.
  */
 
 #include "VBoxTray.h"
+#include <stdlib.h>
 #include <string.h>
 
 
@@ -139,6 +143,43 @@ static void vboxMouseCorrect(VBOXMOUSESTATE *pState)
 }
 
 /**
+ * Turns the move the pointer must make into the one to post, which USER's
+ * acceleration (SPI_GETMOUSE) brings to it: when the move along either
+ * axis is over the first threshold USER doubles both, and over the second
+ * one too with speed 2 it doubles them again.  When no posted move lands
+ * exactly, the largest that doesn't overshoot is posted.
+ *
+ * @param   pdx     In: the move in pixels; out: the move to post.
+ * @param   pdy     The same for y.
+ */
+static void vboxMouseCompensate(LONG *pdx, LONG *pdy)
+{
+    int aMouse[3]; /* First threshold, second threshold, speed. */
+    LONG m = labs(*pdx) > labs(*pdy) ? labs(*pdx) : labs(*pdy);
+    LONG lLimit;
+
+    if (!SystemParametersInfo(SPI_GETMOUSE, 0, aMouse, 0) || !aMouse[2] || m <= aMouse[0])
+        return; /* Not accelerated. */
+    if (aMouse[2] >= 2 && m / 4 > aMouse[0] && m / 4 > aMouse[1])
+    {
+        *pdx /= 4;
+        *pdy /= 4;
+        return;
+    }
+    if (m / 2 > aMouse[0] && (aMouse[2] < 2 || m / 2 <= aMouse[1]))
+    {
+        *pdx /= 2;
+        *pdy /= 2;
+        return;
+    }
+    lLimit = aMouse[0];
+    if (aMouse[2] >= 2 && aMouse[1] > aMouse[0] && 2 * (LONG)aMouse[1] <= m)
+        lLimit = aMouse[1];
+    *pdx = MulDiv(*pdx, lLimit, m);
+    *pdy = MulDiv(*pdy, lLimit, m);
+}
+
+/**
  * Follows the host position if the host wants absolute mode.
  *
  * @param   hDevice     The device handle.
@@ -202,6 +243,7 @@ static void vboxMouseUpdate(HANDLE hDevice, VBOXMOUSESTATE *pState)
         DWORD cb = 0;
         aMove[0] = xPx - pState->xPx;
         aMove[1] = yPx - pState->yPx;
+        vboxMouseCompensate(&aMove[0], &aMove[1]);
         aMove[2] = x;
         aMove[3] = y;
         DeviceIoControl(pState->hVxD, VBOXMOU_IOCTL_POST_MOVE, aMove, sizeof(aMove), &fSysVM, sizeof(fSysVM), &cb, NULL);

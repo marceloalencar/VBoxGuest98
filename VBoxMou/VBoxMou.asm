@@ -274,7 +274,9 @@ DC_Post:
         mov     [fOwnPost], 1
         mov     esi, [ebx]
         mov     edi, [ebx + 4]
-        mov     al, BYTE PTR [LastButtons]
+        movzx   eax, BYTE PTR [LastButtons]
+        xor     ebx, ebx                ; the rest zero, like VMOUSE's own PS/2
+        xor     ecx, ecx                ; packets (ECX = 1 scrolled up on each move)
         mov     edx, [LastInstance]
         VxDCall VMD_Post_Pointer_Message
         mov     [fOwnPost], 0
