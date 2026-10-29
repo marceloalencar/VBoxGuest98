@@ -20,9 +20,9 @@
  *  file versions, the tray icon and the logs.  These are also used by the
  *  resource scripts, which only see this part of the header (RC_INVOKED). */
 #define VBOXGUEST98_VERSION_MAJOR       0
-#define VBOXGUEST98_VERSION_MINOR       2
+#define VBOXGUEST98_VERSION_MINOR       3
 #define VBOXGUEST98_VERSION_PATCH       0
-#define VBOXGUEST98_VERSION_STRING      "0.2.0"
+#define VBOXGUEST98_VERSION_STRING      "0.3.0"
 
 /** VirtualBox version the guest additions track.  Reported to the host as the
  *  Guest Additions version, since the host compares it with its own. */
