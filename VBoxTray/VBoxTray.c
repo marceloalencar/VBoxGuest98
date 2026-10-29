@@ -75,6 +75,7 @@ static VBOXTRAYSERVICE g_aServices[] =
     { "DnD",       VBoxDnDInit,       VBoxDnDThread,       VBoxDnDStop,       NULL },
     { "VMInfo",    VBoxVMInfoInit,    VBoxVMInfoThread,    VBoxVMInfoStop,    NULL },
     { "GstCtrl",   VBoxGstCtrlInit,   VBoxGstCtrlThread,   VBoxGstCtrlStop,   NULL },
+    { "AutoMount", VBoxAutoMountInit, VBoxAutoMountThread, VBoxAutoMountStop, NULL },
 };
 
 static HINSTANCE g_hInstance;

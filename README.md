@@ -6,6 +6,10 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 
 **VBoxMou**: Dynamic VxD loaded by VBoxTray for DirectInput applications and full screen MS-DOS programs
 
+**VBoxSF**: Static VxD, a network file system driver for the shared folders
+
+**VBoxNP**: Network provider DLL for the shared folders
+
 **VBoxTray**: Tray application started at logon:
 - Mouse pointer integration
 - Time synchronization
@@ -17,6 +21,7 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 - Guest properties: OS version, logged in user and network adapters (IP, MAC),
   shown in the VM's session information and `VBoxManage guestproperty enumerate`
 - Guest control: `VBoxManage guestcontrol`
+- Shared folders auto-mount
 - Reports the VBoxTrayClient facility status to the host
 - Logs start/stop, setup failures, clock adjustments, display mode changes
   and the statistics interval to the VM's `VBox.log`
@@ -56,6 +61,14 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxGst/Log.c` | Release logging through the backdoor port |
 | `VBoxTray/VBoxTray.c` | WinMain, tray icon, service threads |
 | `VBoxMou/VBoxMou.asm` | VxD posting mouse moves to VMOUSE (DirectInput, MS-DOS) |
+| `VBoxSF/VBoxSFA.asm` | Shared folders VxD: device declaration, control procedure, service thunks |
+| `VBoxSF/VBoxSF.c` | Shared folders: initialization, Win32 interface, logging, helpers |
+| `VBoxSF/Host.c` | Shared folders: VBoxSharedFolders HGCM client (through VBoxGst) |
+| `VBoxSF/Net.c` | Shared folders: IFSMgr connections and volume functions |
+| `VBoxSF/File.c` | Shared folders: open files (read, write, locks, times) |
+| `VBoxSF/Find.c` | Shared folders: Win32 and MS-DOS directory searches |
+| `VBoxSF/Names.c` | Shared folders: 8.3 names and path translation |
+| `VBoxNP/VBoxNP.c` | Shared folders network provider: browsing and drive letters through MPR |
 | `VBoxTray/Mouse.c` | Mouse pointer integration |
 | `VBoxTray/TimeSync.c` | Guest clock synchronization |
 | `VBoxTray/Clipboard.c` | Shared clipboard (text, images, HTML) |
@@ -72,6 +85,7 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/GuestProp.c` | Guest property HGCM calls |
 | `VBoxTray/GstCtrl.c` | Guest control: sessions and programs started from the host |
 | `VBoxTray/GstCtrlFile.c` | Guest control: files, directories and file systems |
+| `VBoxTray/AutoMount.c` | Automatic mounting of shared folders on drive letters |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode, HGCM call builder |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 | `installer/VBoxGuest98.nsi` | Installer and uninstaller (NSIS 2.46) |

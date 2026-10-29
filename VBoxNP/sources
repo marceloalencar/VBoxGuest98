@@ -1,0 +1,27 @@
+TARGETNAME=VBoxNP
+TARGETPATH=obj
+TARGETTYPE=DYNLINK
+UMTYPE=windows
+DLLDEF=VBoxNP.def
+
+# The Windows 98 DDK puts its old SDK headers first; winnetwk.h needs the
+# Visual C++ 6.0 ones (WNNC_NET_RDR2SAMPLE).
+INCLUDES=..\inc;$(MSVCDIR)\include
+
+SOURCES= \
+        VBoxNP.c \
+        VBoxNP.rc
+
+TARGETLIBS= \
+        $(SDK_LIB_PATH)\kernel32.lib \
+        $(SDK_LIB_PATH)\user32.lib
+
+LIB=$(MSVCDIR)\lib
+INCLUDE=$(MSVCDIR)\include
+
+MSC_WARNING_LEVEL=/W3 /WX
+# The C run time from LIBCMT, not NTDLL.DLL (Windows 98 has no such exports).
+NO_NTDLL=1
+
+# The Windows 98 DDK has no coffbase.txt to look the base address up in.
+DLLBASE=0x10500000

@@ -20,9 +20,9 @@
  *  file versions, the tray icon and the logs.  These are also used by the
  *  resource scripts, which only see this part of the header (RC_INVOKED). */
 #define VBOXGUEST98_VERSION_MAJOR       0
-#define VBOXGUEST98_VERSION_MINOR       3
-#define VBOXGUEST98_VERSION_PATCH       1
-#define VBOXGUEST98_VERSION_STRING      "0.3.1"
+#define VBOXGUEST98_VERSION_MINOR       4
+#define VBOXGUEST98_VERSION_PATCH       0
+#define VBOXGUEST98_VERSION_STRING      "0.4.0"
 
 /** VirtualBox version the guest additions track.  Reported to the host as the
  *  Guest Additions version, since the host compares it with its own. */
@@ -110,6 +110,11 @@
 /** Set the mouse features required by the kernel mode client.
  *  In: VBOXGUEST98MOUSESTATUS. */
 #define IOCTL_VBOXGUEST98_INTERNAL_SET_MOUSE_STATUS VBOXGUEST98_IOCTL_CODE(65)
+/** Get a direct HGCM call entry point for the session of the handle this is
+ *  sent on.  Out: VBOXGUEST98DIRECTHGCM.  For VBoxSF's paging I/O (the
+ *  program loader), where NTKERN returns from I/O controls without passing
+ *  them to the driver. */
+#define IOCTL_VBOXGUEST98_INTERNAL_GET_DIRECT_HGCM  VBOXGUEST98_IOCTL_CODE(66)
 /** @} */
 
 
@@ -220,6 +225,21 @@ typedef struct VBOXGUEST98MOUSENOTIFY
     PFNVBOXGUEST98MOUSENOTIFY pfnNotify;
     PVOID pvUser;
 } VBOXGUEST98MOUSENOTIFY;
+
+/** Direct HGCM call: like IOCTL_VBOXGUEST98_HGCM_CALL (pCall->rc gets the
+ *  result), but it polls for the completion instead of waiting on an event,
+ *  so it works where the caller can't wait for NTKERN (paging I/O).
+ *  PASSIVE_LEVEL, the call and its buffers in locked memory.
+ *  @returns VBox status code of the request itself. */
+typedef INT32 (__stdcall *PFNVBOXGUEST98HGCMCALLDIRECT)(PVOID pvSession, VBOXGUEST98HGCMCALL *pCall, UINT32 cbCall);
+
+/** IOCTL_VBOXGUEST98_INTERNAL_GET_DIRECT_HGCM output. */
+typedef struct VBOXGUEST98DIRECTHGCM
+{
+    PFNVBOXGUEST98HGCMCALLDIRECT pfnCall;
+    /** The session to pass, valid while the handle is open. */
+    PVOID pvSession;
+} VBOXGUEST98DIRECTHGCM;
 
 #pragma pack(pop)
 

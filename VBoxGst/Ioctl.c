@@ -9,6 +9,22 @@
 #include "VBoxGst.h"
 
 
+/** The device the direct HGCM calls go to (set when a client gets the entry
+ *  point; there is only one VMMDev). */
+static PVBOXGUESTDEVEXT g_pDirectHgcmDevExt;
+
+/**
+ * The direct HGCM call entry point (IOCTL_VBOXGUEST98_INTERNAL_GET_DIRECT_HGCM).
+ */
+static INT32 __stdcall vgdrvHgcmCallDirect(PVOID pvSession, VBOXGUEST98HGCMCALL *pCall, UINT32 cbCall)
+{
+    if (!g_pDirectHgcmDevExt || !pvSession || !pCall || cbCall < sizeof(*pCall))
+        return VERR_INVALID_PARAMETER;
+    pCall->rc = VGDrvHgcmCall(g_pDirectHgcmDevExt, (PVBOXGUESTSESSION)pvSession, pCall, cbCall, TRUE);
+    return VINF_SUCCESS;
+}
+
+
 /**
  * Checks whether a raw VMMDev request may be issued by a client.
  *
@@ -158,7 +174,7 @@ static NTSTATUS vgdrvIoCtlHgcmCall(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION p
     if (cbOut < cbIn)
         return STATUS_BUFFER_TOO_SMALL;
 
-    pCall->rc = VGDrvHgcmCall(pDevExt, pSession, pCall, cbIn);
+    pCall->rc = VGDrvHgcmCall(pDevExt, pSession, pCall, cbIn, FALSE);
     *pcbRet = cbIn;
     return STATUS_SUCCESS;
 }
@@ -274,6 +290,7 @@ NTSTATUS NTAPI vgdrvWinInternalIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
     PIO_STACK_LOCATION pStack = IoGetCurrentIrpStackLocation(pIrp);
     ULONG cbIn  = pStack->Parameters.DeviceIoControl.InputBufferLength;
     PVOID pvBuf = pIrp->AssociatedIrp.SystemBuffer;
+    ULONG_PTR cbRet = 0;
     NTSTATUS rcNt;
 
     if (pDevExtWin->enmDevState == VGDRVWINDEVSTATE_REMOVED)
@@ -300,10 +317,28 @@ NTSTATUS NTAPI vgdrvWinInternalIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
                                                                           ((VBOXGUEST98MOUSESTATUS *)pvBuf)->fFeatures));
             break;
 
+        case IOCTL_VBOXGUEST98_INTERNAL_GET_DIRECT_HGCM:
+            /* For the session of the handle it comes on (VBoxSF's). */
+            if (   !pvBuf
+                || pStack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(VBOXGUEST98DIRECTHGCM)
+                || !pStack->FileObject
+                || !pStack->FileObject->FsContext)
+                rcNt = STATUS_INVALID_PARAMETER;
+            else
+            {
+                VBOXGUEST98DIRECTHGCM *pDirect = (VBOXGUEST98DIRECTHGCM *)pvBuf;
+                g_pDirectHgcmDevExt = pDevExt;
+                pDirect->pfnCall   = vgdrvHgcmCallDirect;
+                pDirect->pvSession = pStack->FileObject->FsContext;
+                cbRet = sizeof(*pDirect);
+                rcNt = STATUS_SUCCESS;
+            }
+            break;
+
         default:
             rcNt = STATUS_INVALID_DEVICE_REQUEST;
             break;
     }
 
-    return vgdrvWinCompleteRequest(pIrp, rcNt, 0);
+    return vgdrvWinCompleteRequest(pIrp, rcNt, cbRet);
 }

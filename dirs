@@ -1,3 +1,4 @@
 DIRS= \
      VBoxGst \
-     VBoxTray
+     VBoxTray \
+     VBoxNP

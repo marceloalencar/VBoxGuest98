@@ -5,7 +5,9 @@
 ;
 ; Windows 98/ME can't install a driver programmatically from 32-bit code, so the
 ; installer preinstalls it, as the Oney WDM book suggests for these systems:
-;  - copies VBoxGst.sys, VBoxTray.exe and VBoxMou.vxd to their final places;
+;  - copies VBoxGst.sys, VBoxTray.exe, VBoxMou.vxd, VBoxSF.vxd and VBoxNP.dll
+;    to their final places, VBoxSF as a static VxD (it registers with IFSMgr
+;    at boot) and VBoxNP as a network provider (MPR loads it at boot);
 ;  - copies an INF without CopyFiles lines to INF, the only folder in the
 ;    DevicePath of Windows ME (Windows 98 also has INF\OTHER in
 ;    OtherDevicePath, where the Add Hardware wizard puts it);
@@ -42,6 +44,10 @@
 !define UNINST_KEY      "Software\Microsoft\Windows\CurrentVersion\Uninstall\VBoxGuest98"
 !define RUN_KEY         "Software\Microsoft\Windows\CurrentVersion\Run"
 !define CLASS_KEY       "System\CurrentControlSet\Services\Class\System"
+!define VXD_KEY         "System\CurrentControlSet\Services\VxD\VBoxSF"
+!define NP_KEY          "System\CurrentControlSet\Services\VBoxNP\NetworkProvider"
+!define NP_SERVICE_KEY  "System\CurrentControlSet\Services\VBoxNP"
+!define NP_ORDER_KEY    "System\CurrentControlSet\Control\NetworkProvider\Order"
 !define PCI_KEY         "Enum\PCI"
 !define DEVICE_PREFIX   "VEN_80EE&DEV_CAFE"
 !define VENDOR_PREFIX   "VEN_80EE&"
@@ -244,6 +250,20 @@ Section "${PRODUCT}" SecMain
   !insertmacro INSTALL_FILE "..\VBoxGst\obj\i386\${BUILDTYPE}\VBoxGst.sys" "$WINDIR\SYSTEM32\DRIVERS" "VBoxGst.sys" "VBOXGST.NEW"
   !insertmacro INSTALL_FILE "..\VBoxTray\obj\i386\${BUILDTYPE}\VBoxTray.exe" "$SYSDIR" "VBoxTray.exe" "VBOXTRAY.NEW"
   !insertmacro INSTALL_FILE "..\VBoxMou\obj\i386\${BUILDTYPE}\VBoxMou.vxd" "$SYSDIR" "VBoxMou.vxd" "VBOXMOU.NEW"
+  !insertmacro INSTALL_FILE "..\VBoxSF\obj\i386\${BUILDTYPE}\VBoxSF.vxd" "$SYSDIR" "VBoxSF.vxd" "VBOXSF.NEW"
+  WriteRegStr HKLM "${VXD_KEY}" "StaticVxD" "$SYSDIR\VBoxSF.vxd"
+  WriteRegBin HKLM "${VXD_KEY}" "Start" 00
+  ; The network provider, as the INF of a Windows 95 network client registers
+  ; one: NetID is the network type (WNNC_NET_RDR2SAMPLE, the one VBoxSF gives
+  ; IFSMgr), CallOrder puts it before the Microsoft network (0x40000000), so
+  ; \\VBOXSVR names don't wait for a NetBIOS lookup first.
+  !insertmacro INSTALL_FILE "..\VBoxNP\obj\i386\${BUILDTYPE}\VBoxNP.dll" "$SYSDIR" "VBoxNP.dll" "VBOXNP.NEW"
+  WriteRegStr HKLM "${NP_KEY}" "Name" "VirtualBox Shared Folders"
+  WriteRegStr HKLM "${NP_KEY}" "Description" "VirtualBox Shared Folders"
+  WriteRegStr HKLM "${NP_KEY}" "ProviderPath" "VBoxNP.dll"
+  WriteRegBin HKLM "${NP_KEY}" "NetID" 00002500
+  WriteRegBin HKLM "${NP_KEY}" "CallOrder" 00000030
+  WriteRegStr HKLM "${NP_ORDER_KEY}" "VBoxNP" ""
 
   SetOutPath "$WINDIR\INF"
   File "/oname=${INF_NAME}" "obj\VBoxGst.inf"
@@ -294,6 +314,11 @@ Section "Uninstall"
   DeleteRegValue HKLM "${RUN_KEY}" "VBoxTray"
   Delete /REBOOTOK "$SYSDIR\VBoxTray.exe"
   Delete /REBOOTOK "$SYSDIR\VBoxMou.vxd"
+  DeleteRegKey HKLM "${VXD_KEY}"
+  Delete /REBOOTOK "$SYSDIR\VBoxSF.vxd"
+  DeleteRegValue HKLM "${NP_ORDER_KEY}" "VBoxNP"
+  DeleteRegKey HKLM "${NP_SERVICE_KEY}"
+  Delete /REBOOTOK "$SYSDIR\VBoxNP.dll"
   Delete /REBOOTOK "$WINDIR\SYSTEM32\DRIVERS\VBoxGst.sys"
   Delete "$WINDIR\INF\${INF_NAME}"
   Delete "$WINDIR\INF\OTHER\${OTHER_INF_NAME}"

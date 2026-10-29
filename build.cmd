@@ -26,7 +26,7 @@ set MSDevDir=%MSVC6DIR%\VC98
 call "%DDK98DIR%\bin\setenv.bat" %DDK98DIR% %BUILDTYPE%
 cd /d "%~dp0"
 rem build.exe does not create the target folders and the link fails without them.
-for %%d in (VBoxGst VBoxTray VBoxMou) do if not exist %%d\%OBJDIR% mkdir %%d\%OBJDIR%
+for %%d in (VBoxGst VBoxTray VBoxNP VBoxMou VBoxSF) do if not exist %%d\%OBJDIR% mkdir %%d\%OBJDIR%
 build -cZ
 
 rem VBoxMou.vxd: build.exe has no VxD support, so assemble and link it here.
@@ -36,6 +36,23 @@ if errorlevel 1 goto failed
 "%DDK98DIR%\bin\link.exe" -nologo -vxd -nod -ignore:4078 -ignore:4039 -def:VBoxMou\VBoxMou.def ^
     -out:VBoxMou\%OBJDIR%\VBoxMou.vxd -map:VBoxMou\%OBJDIR%\VBoxMou.map VBoxMou\%OBJDIR%\VBoxMou.obj
 if errorlevel 1 goto failed
+
+rem VBoxSF.vxd: C with a small assembler part, compiled and linked the same way.
+set SFCFLAGS=-nologo -c -W3 -WX -Zp -Gs -Zl -DIS_32 -I"%DDK98DIR%\inc\win98"
+if /i "%BUILDTYPE%"=="free" set SFCFLAGS=%SFCFLAGS% -O2
+if /i "%BUILDTYPE%"=="checked" set SFCFLAGS=%SFCFLAGS% -Od
+for %%f in (VBoxSF Host Net File Find Names) do (
+    cl %SFCFLAGS% -FoVBoxSF\%OBJDIR%\%%f.obj VBoxSF\%%f.c
+    if errorlevel 1 goto failed_sf
+)
+"%DDK98DIR%\bin\win98\ml.exe" -nologo -coff -DBLD_COFF -DIS_32 -DMASM6 -DDEBLEVEL=0 -W2 -c -Cx -Zm ^
+    -I"%DDK98DIR%\inc\win98" -FoVBoxSF\%OBJDIR%\VBoxSFA.obj VBoxSF\VBoxSFA.asm
+if errorlevel 1 goto failed_sf
+"%DDK98DIR%\bin\link.exe" -nologo -vxd -nod -ignore:4078 -ignore:4039 -def:VBoxSF\VBoxSF.def ^
+    -out:VBoxSF\%OBJDIR%\VBoxSF.vxd -map:VBoxSF\%OBJDIR%\VBoxSF.map VBoxSF\%OBJDIR%\VBoxSFA.obj ^
+    VBoxSF\%OBJDIR%\VBoxSF.obj VBoxSF\%OBJDIR%\Host.obj VBoxSF\%OBJDIR%\Net.obj VBoxSF\%OBJDIR%\File.obj ^
+    VBoxSF\%OBJDIR%\Find.obj VBoxSF\%OBJDIR%\Names.obj
+if errorlevel 1 goto failed_sf
 
 if not exist "%NSIS2DIR%\makensis.exe" goto no_nsis
 "%NSIS2DIR%\makensis.exe" /V2 /DBUILDTYPE=%BUILDTYPE% installer\VBoxGuest98.nsi
@@ -59,6 +76,10 @@ exit /b 1
 
 :failed
 echo VBoxMou.vxd build failed.
+exit /b 1
+
+:failed_sf
+echo VBoxSF.vxd build failed.
 exit /b 1
 
 :end

@@ -259,7 +259,8 @@ void VGDrvCommonInterruptWaits(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSess
 
 int  VGDrvHgcmConnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, const char *pszService, UINT32 *pidClient);
 int  VGDrvHgcmDisconnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, UINT32 idClient);
-int  VGDrvHgcmCall(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, VBOXGUEST98HGCMCALL *pCall, ULONG cbCall);
+int  VGDrvHgcmCall(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, VBOXGUEST98HGCMCALL *pCall, ULONG cbCall,
+                   BOOLEAN fPoll);
 void VGDrvHgcmDisconnectSessionClients(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
 
 

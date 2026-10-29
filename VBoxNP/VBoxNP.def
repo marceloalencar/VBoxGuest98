@@ -1,0 +1,15 @@
+; VBoxNP - network provider entry points.  MPR finds NPGetCaps by name and
+; the others by the ordinals of the Windows 95 network provider SPI.
+LIBRARY VBoxNP
+
+EXPORTS
+        NPGetConnection                     @12
+        NPGetCaps                           @13
+        NPAddConnection                     @17
+        NPCancelConnection                  @18
+        NPOpenEnum                          @33
+        NPEnumResource                      @34
+        NPCloseEnum                         @35
+        NPGetResourceParent                 @41
+        NPFormatNetworkName                 @46
+        NPGetResourceInformation            @52

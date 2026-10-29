@@ -80,6 +80,28 @@ static int vgdrvHgcmCancel(VMMDevHGCMRequestHeader *pHGCMReq)
 }
 
 /**
+ * Polls for the completion of an HGCM request, for callers that can't wait
+ * on an event (VBoxSF's paging I/O).  An infinite wait gives up after a
+ * minute, so the caller cancels the request.
+ *
+ * @returns VINF_SUCCESS or VERR_TIMEOUT.
+ */
+static int vgdrvHgcmPoll(VMMDevHGCMRequestHeader volatile *pHGCMReq, UINT32 cMsTimeout)
+{
+    UINT32 cUsLeft = cMsTimeout == VBOXGUEST98_WAIT_INFINITE || cMsTimeout > 60 * 1000
+                   ? 60 * 1000 * 1000 : cMsTimeout * 1000;
+
+    while (!(pHGCMReq->fu32Flags & VBOX_HGCM_REQ_DONE))
+    {
+        if (cUsLeft < 20)
+            return VERR_TIMEOUT;
+        KeStallExecutionProcessor(20);
+        cUsLeft -= 20;
+    }
+    return VINF_SUCCESS;
+}
+
+/**
  * Submits an HGCM request and waits for it to complete.
  *
  * The completion/cancellation handling follows upstream's vbglR0HGCMInternalDoCall.
@@ -91,11 +113,12 @@ static int vgdrvHgcmCancel(VMMDevHGCMRequestHeader *pHGCMReq)
  * @param   pHGCMReq    The request.
  * @param   fRequestor  VMMDEV_REQUESTOR_XXX for the request header.
  * @param   cMsTimeout  Timeout in milliseconds or VBOXGUEST98_WAIT_INFINITE.
+ * @param   fPoll       Poll for the completion instead of waiting.
  * @param   pfLeak      Set to TRUE when the host may still access the
  *                      request (and its buffers), which then must not be freed.
  */
 static int vgdrvHgcmPerform(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, VMMDevHGCMRequestHeader *pHGCMReq,
-                            UINT32 fRequestor, UINT32 cMsTimeout, BOOLEAN *pfLeak)
+                            UINT32 fRequestor, UINT32 cMsTimeout, BOOLEAN fPoll, BOOLEAN *pfLeak)
 {
     int rc;
     int rc2;
@@ -108,7 +131,10 @@ static int vgdrvHgcmPerform(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession
     rc = VbglR0GRPerform(&pHGCMReq->header);
     if (rc == VINF_HGCM_ASYNC_EXECUTE)
     {
-        rc = VGDrvCommonWaitForHgcm(pDevExt, pSession, pHGCMReq, cMsTimeout);
+        if (fPoll)
+            rc = vgdrvHgcmPoll(pHGCMReq, cMsTimeout);
+        else
+            rc = VGDrvCommonWaitForHgcm(pDevExt, pSession, pHGCMReq, cMsTimeout);
         if (pHGCMReq->fu32Flags & VBOX_HGCM_REQ_DONE)
             rc = VINF_SUCCESS;
         else
@@ -126,7 +152,10 @@ static int vgdrvHgcmPerform(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession
                 pHGCMReq->fu32Flags |= VBOX_HGCM_REQ_CANCELLED;
             else
             {
-                VGDrvCommonWaitForHgcm(pDevExt, pSession, pHGCMReq, rc2 == VERR_NOT_FOUND ? 500 : 2000);
+                if (fPoll)
+                    vgdrvHgcmPoll(pHGCMReq, rc2 == VERR_NOT_FOUND ? 500 : 2000);
+                else
+                    VGDrvCommonWaitForHgcm(pDevExt, pSession, pHGCMReq, rc2 == VERR_NOT_FOUND ? 500 : 2000);
                 if (pHGCMReq->fu32Flags & VBOX_HGCM_REQ_DONE)
                     rc = VINF_SUCCESS;
                 else
@@ -181,7 +210,7 @@ int VGDrvHgcmConnect(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, const
             pReq->loc.u.host.achName[off] = pszService[off];
         pReq->u32ClientID = 0;
 
-        rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, pSession->fRequestor, VBOXGUEST98_WAIT_INFINITE, &fLeak);
+        rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, pSession->fRequestor, VBOXGUEST98_WAIT_INFINITE, FALSE, &fLeak);
         if (RT_SUCCESS(rc))
             *pidClient = pReq->u32ClientID;
         if (!fLeak)
@@ -210,7 +239,7 @@ static int vgdrvHgcmDisconnectWorker(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION
     if (RT_SUCCESS(rc))
     {
         pReq->u32ClientID = idClient;
-        rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, fRequestor, VBOXGUEST98_WAIT_INFINITE, &fLeak);
+        rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, fRequestor, VBOXGUEST98_WAIT_INFINITE, FALSE, &fLeak);
         if (!fLeak)
             VbglR0GRFree(&pReq->header.header);
     }
@@ -330,8 +359,11 @@ static int vgdrvHgcmValidateCall(VBOXGUEST98HGCMCALL *pCall, ULONG cbCall, ULONG
  * @param   pSession    The calling session.
  * @param   pCall       The call header, parameters and data (system buffer).
  * @param   cbCall      Size of the buffer at pCall.
+ * @param   fPoll       Poll for the completion instead of waiting (the
+ *                      direct calls of IOCTL_VBOXGUEST98_INTERNAL_GET_DIRECT_HGCM).
  */
-int VGDrvHgcmCall(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, VBOXGUEST98HGCMCALL *pCall, ULONG cbCall)
+int VGDrvHgcmCall(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, VBOXGUEST98HGCMCALL *pCall, ULONG cbCall,
+                  BOOLEAN fPoll)
 {
     VBOXGUEST98HGCMPARM *paParms = VBOXGUEST98_HGCM_CALL_PARMS(pCall);
     HGCMFunctionParameter32 *paReqParms;
@@ -406,7 +438,7 @@ int VGDrvHgcmCall(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession, VBOXGUES
         }
     }
 
-    rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, pSession->fRequestor, pCall->cMsTimeout, &fLeak);
+    rc = vgdrvHgcmPerform(pDevExt, pSession, &pReq->header, pSession->fRequestor, pCall->cMsTimeout, fPoll, &fLeak);
 
     /*
      * Copy back values and output buffers.

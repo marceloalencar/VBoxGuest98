@@ -4,15 +4,16 @@
  * Subset of include/VBox/VMMDev.h, include/VBox/VMMDevCoreTypes.h,
  * include/VBox/ostypes.h, include/VBox/HostServices/GuestPropertySvc.h,
  * include/VBox/HostServices/VBoxClipboardSvc.h,
- * include/VBox/GuestHost/SharedClipboard.h, include/VBox/err.h and
- * include/iprt/err.h from VirtualBox 7.2.22 (r175245), rewritten in C89 so it
- * builds with Visual C++ 6.0 and the Windows 98 DDK.  Values and structure
+ * include/VBox/GuestHost/SharedClipboard.h, include/VBox/shflsvc.h,
+ * include/VBox/err.h and include/iprt/err.h from VirtualBox 7.2.22 (r175245),
+ * rewritten in C89 so it builds with Visual C++ 6.0 and the Windows 98 DDK.  Values and structure
  * sizes were checked against those headers; the sizes are also enforced at
  * compile time at the end of this file.
  *
  * This header has no kernel dependencies and is shared by the driver
- * (VBoxGst) and user mode programs (VBoxTray).  Include <wdm.h> or <windows.h>
- * before it.
+ * (VBoxGst), the shared folders VxD (VBoxSF) and user mode programs
+ * (VBoxTray).  Include <wdm.h> or <windows.h> before it (VBoxSF defines the
+ * few types it needs itself).
  */
 
 #ifndef VBOXGUEST98_VMMDEV_H
@@ -57,6 +58,7 @@
 #define VERR_WRITE_ERROR                (-112)
 #define VERR_WRITE_PROTECT              (-113)
 #define VERR_SHARING_VIOLATION          (-114)
+#define VERR_FILE_LOCK_VIOLATION        (-116)
 #define VERR_FILENAME_TOO_LONG          (-120)
 #define VERR_DIR_NOT_EMPTY              (-125)
 #define VERR_NOT_A_DIRECTORY            (-126)
@@ -1394,6 +1396,298 @@ typedef struct GSTCTLFSINFO
 #define VBOX_GUESTCTRL_HF_0_PROCESS_CWD                 ((UINT64)1 << 2)
 /** @} */
 
+/*********************************************************************************************************************************
+*   Shared folders HGCM service (used by VBoxSF)                                                                                 *
+*********************************************************************************************************************************/
+
+#define SHFL_SERVICE_NAME                               "VBoxSharedFolders"
+/** Longest shared folder name, in characters. */
+#define SHFL_MAX_LEN                                    256
+/** Most mappings the host gives a guest. */
+#define SHFL_MAX_MAPPINGS                               64
+
+/** @name Guest functions (include/VBox/shflsvc.h).  Strings are SHFLSTRING,
+ *  UTF-16 unless the client did SHFL_FN_SET_UTF8.
+ * @{ */
+/** Lists the mappings.  Parms: [0] SHFL_MF_XXX flags (32bit in), [1] number
+ *  of entries (32bit in/out), [2] SHFLMAPPING array (buffer out).
+ *  VINF_BUFFER_OVERFLOW if there are more. */
+#define SHFL_FN_QUERY_MAPPINGS                          1
+#define SHFL_FN_QUERY_MAPPINGS_CPARMS                   3
+/** Gets a mapping's name.  Parms: [0] root (32bit in), [1] SHFLSTRING (buffer out). */
+#define SHFL_FN_QUERY_MAP_NAME                          2
+#define SHFL_FN_QUERY_MAP_NAME_CPARMS                   2
+#define SHFL_FN_CREATE                                  3
+#define SHFL_FN_CLOSE                                   4
+#define SHFL_FN_READ                                    5
+#define SHFL_FN_WRITE                                   6
+#define SHFL_FN_LOCK                                    7
+#define SHFL_FN_LIST                                    8
+#define SHFL_FN_INFORMATION                             9
+#define SHFL_FN_REMOVE                                  11
+/** Unmaps a folder.  Parms: [0] root (32bit in). */
+#define SHFL_FN_UNMAP_FOLDER                            13
+#define SHFL_FN_UNMAP_FOLDER_CPARMS                     1
+#define SHFL_FN_RENAME                                  14
+#define SHFL_FN_FLUSH                                   15
+#define SHFL_FN_SET_UTF8                                16
+/** Maps a folder by name.  Parms: [0] SHFLSTRING name (buffer in), [1] root
+ *  (32bit out), [2] path delimiter (32bit in), [3] case sensitive (32bit in). */
+#define SHFL_FN_MAP_FOLDER                              17
+#define SHFL_FN_MAP_FOLDER_CPARMS                       4
+#define SHFL_FN_QUERY_MAP_INFO                          21
+#define SHFL_FN_WAIT_FOR_MAPPINGS_CHANGES               22
+#define SHFL_FN_CANCEL_MAPPINGS_CHANGES_WAITS           23
+#define SHFL_FN_SET_FILE_SIZE                           24
+#define SHFL_FN_QUERY_FEATURES                          25
+#define SHFL_FN_CLOSE_AND_REMOVE                        28
+#define SHFL_FN_SET_ERROR_STYLE                         29
+/** @} */
+
+/** @name SHFL_FN_QUERY_MAPPINGS flags
+ * @{ */
+#define SHFL_MF_UCS2                                    0x00000000
+#define SHFL_MF_UTF8                                    0x00000001
+#define SHFL_MF_AUTOMOUNT                               0x00000010
+/** @} */
+
+/** Root handle of a mapping. */
+typedef UINT32 SHFLROOT;
+
+/** Shared folders string: sizes in bytes, the string is zero terminated. */
+typedef struct SHFLSTRING
+{
+    /** Size of String in bytes. */
+    USHORT u16Size;
+    /** Length of String in bytes, terminator excluded. */
+    USHORT u16Length;
+    union
+    {
+        char   ach[1];
+        WCHAR  utf16[1];
+    } String;
+} SHFLSTRING;
+/** Size of SHFLSTRING without the string. */
+#define SHFLSTRING_HEADER_SIZE                          4
+
+/** A mapping in the SHFL_FN_QUERY_MAPPINGS output. */
+typedef struct SHFLMAPPING
+{
+    /** SHFL_MS_NEW (always). */
+    UINT32 u32Status;
+    SHFLROOT root;
+} SHFLMAPPING;
+
+/** Host handle of an open file or directory. */
+typedef UINT64 SHFLHANDLE;
+#define SHFL_HANDLE_NIL                                 (~(SHFLHANDLE)0)
+#define SHFL_HANDLE_ROOT                                ((SHFLHANDLE)0)
+
+/** @name More guest functions: parameters.
+ * @{ */
+/** Opens, creates or looks up an object.  Parms: [0] root (32bit in),
+ *  [1] SHFLSTRING path (buffer in), [2] SHFLCREATEPARMS (buffer in/out). */
+#define SHFL_FN_CREATE_CPARMS                           3
+/** Closes a handle.  Parms: [0] root (32bit in), [1] handle (64bit in). */
+#define SHFL_FN_CLOSE_CPARMS                            2
+/** Reads.  Parms: [0] root (32bit in), [1] handle (64bit in), [2] offset
+ *  (64bit in), [3] bytes (32bit in/out), [4] data (buffer out). */
+#define SHFL_FN_READ_CPARMS                             5
+/** Lists a directory.  Parms: [0] root (32bit in), [1] handle (64bit in),
+ *  [2] SHFL_LIST_XXX (32bit in), [3] buffer size (32bit in/out),
+ *  [4] SHFLSTRING filter (buffer in, may be empty), [5] SHFLDIRINFO entries
+ *  (buffer out), [6] 1 while there are more (32bit out), [7] number of
+ *  entries (32bit out).  VERR_NO_MORE_FILES at the end. */
+#define SHFL_FN_LIST_CPARMS                             8
+/** Gets or sets information.  Parms: [0] root (32bit in), [1] handle
+ *  (64bit in), [2] SHFL_INFO_XXX (32bit in), [3] size (32bit in/out),
+ *  [4] SHFLFSOBJINFO, SHFLVOLINFO or SHFLSTRING (buffer in/out).  Setting
+ *  SHFL_INFO_FILE changes the times that aren't 0 and fMode if it isn't 0. */
+#define SHFL_FN_INFORMATION_CPARMS                      5
+/** Writes.  Parms: [0] root (32bit in), [1] handle (64bit in), [2] offset
+ *  (64bit in/out), [3] bytes (32bit in/out), [4] data (buffer in). */
+#define SHFL_FN_WRITE_CPARMS                            5
+/** Removes a file or directory.  Parms: [0] root (32bit in), [1] SHFLSTRING
+ *  path (buffer in), [2] SHFL_REMOVE_XXX (32bit in). */
+#define SHFL_FN_REMOVE_CPARMS                           3
+/** Renames.  Parms: [0] root (32bit in), [1] SHFLSTRING source (buffer in),
+ *  [2] SHFLSTRING destination (buffer in), [3] SHFL_RENAME_XXX (32bit in). */
+#define SHFL_FN_RENAME_CPARMS                           4
+/** Flushes a file.  Parms: [0] root (32bit in), [1] handle (64bit in). */
+#define SHFL_FN_FLUSH_CPARMS                            2
+/** Sets the size of a file.  Parms: [0] root (32bit in), [1] handle
+ *  (64bit in), [2] new size (64bit in). */
+#define SHFL_FN_SET_FILE_SIZE_CPARMS                    3
+/** Gets a mapping's name and mount point.  Parms: [0] root (32bit in),
+ *  [1] SHFLSTRING name (buffer in/out), [2] SHFLSTRING mount point (buffer
+ *  in/out), [3] SHFL_MIQF_XXX in / SHFL_MIF_XXX out (64bit), [4] root ID
+ *  version (32bit out). */
+#define SHFL_FN_QUERY_MAP_INFO_CPARMS                   5
+/** Waits for the mappings to change.  Parms: [0] version (32bit in/out).
+ *  VINF_TRY_AGAIN after a restore, VERR_CANCELLED when cancelled. */
+#define SHFL_FN_WAIT_FOR_MAPPINGS_CHANGES_CPARMS        1
+/** Cancels the client's SHFL_FN_WAIT_FOR_MAPPINGS_CHANGES calls.  No parms. */
+#define SHFL_FN_CANCEL_MAPPINGS_CHANGES_WAITS_CPARMS    0
+/** @} */
+
+/** Locks or unlocks a byte range.  Parms: [0] root (32bit in), [1] handle
+ *  (64bit in), [2] offset (64bit in), [3] length (64bit in), [4] SHFL_LOCK_XXX
+ *  (32bit in).  VERR_FILE_LOCK_VIOLATION if it is locked already. */
+#define SHFL_FN_LOCK_CPARMS                             5
+
+/** @name SHFL_FN_LOCK flags
+ * @{ */
+#define SHFL_LOCK_CANCEL                                0x0
+#define SHFL_LOCK_SHARED                                0x1
+#define SHFL_LOCK_EXCLUSIVE                             0x2
+#define SHFL_LOCK_NOWAIT                                0x0
+#define SHFL_LOCK_PARTIAL                               0x0
+/** @} */
+
+/** @name SHFL_FN_QUERY_MAP_INFO flags
+ * @{ */
+/** In: the guest prefers drive letters as mount points. */
+#define SHFL_MIQF_DRIVE_LETTER                          ((UINT64)1 << 0)
+/** Out: writable. */
+#define SHFL_MIF_WRITABLE                               ((UINT64)1 << 0)
+/** Out: to be mounted automatically. */
+#define SHFL_MIF_AUTO_MOUNT                             ((UINT64)1 << 1)
+/** @} */
+
+/** @name SHFL_FN_REMOVE flags
+ * @{ */
+#define SHFL_REMOVE_FILE                                0x1
+#define SHFL_REMOVE_DIR                                 0x2
+/** @} */
+
+/** @name SHFL_FN_RENAME flags
+ * @{ */
+#define SHFL_RENAME_FILE                                0x1
+#define SHFL_RENAME_DIR                                 0x2
+#define SHFL_RENAME_REPLACE_IF_EXISTS                   0x4
+/** @} */
+
+/** DOS attribute "normal" (FILE_ATTRIBUTE_NORMAL) in fMode, so that clearing
+ *  all attributes still is a change for SHFL_FN_INFORMATION. */
+#define RTFS_DOS_NT_NORMAL                              (0x0080U << RTFS_DOS_SHIFT)
+
+/** @name SHFL_FN_LIST flags
+ * @{ */
+#define SHFL_LIST_NONE                                  0
+#define SHFL_LIST_RETURN_ONE                            1
+#define SHFL_LIST_RESTART                               2
+/** @} */
+
+/** @name SHFL_FN_INFORMATION flags
+ * @{ */
+#define SHFL_INFO_GET                                   0x00
+#define SHFL_INFO_SET                                   0x01
+#define SHFL_INFO_NAME                                  0x02
+#define SHFL_INFO_SIZE                                  0x04
+#define SHFL_INFO_FILE                                  0x08
+#define SHFL_INFO_VOLUME                                0x10
+/** @} */
+
+/** @name SHFLCREATEPARMS::CreateFlags (SHFL_CF_XXX)
+ * @{ */
+#define SHFL_CF_LOOKUP                                  0x00000001
+#define SHFL_CF_DIRECTORY                               0x00000004
+#define SHFL_CF_ACT_OPEN_IF_EXISTS                      0x00000000
+#define SHFL_CF_ACT_FAIL_IF_EXISTS                      0x00000010
+#define SHFL_CF_ACT_REPLACE_IF_EXISTS                   0x00000020
+#define SHFL_CF_ACT_OVERWRITE_IF_EXISTS                 0x00000030
+#define SHFL_CF_ACT_CREATE_IF_NEW                       0x00000000
+#define SHFL_CF_ACT_FAIL_IF_NEW                         0x00000100
+#define SHFL_CF_ACCESS_READ                             0x00001000
+#define SHFL_CF_ACCESS_WRITE                            0x00002000
+#define SHFL_CF_ACCESS_DENYNONE                         0x00000000
+#define SHFL_CF_ACCESS_DENYREAD                         0x00004000
+#define SHFL_CF_ACCESS_DENYWRITE                        0x00008000
+#define SHFL_CF_ACCESS_ATTR_READ                        0x00010000
+#define SHFL_CF_ACCESS_ATTR_WRITE                       0x00020000
+/** @} */
+
+/** @name SHFLCREATEPARMS::Result (SHFLCREATERESULT)
+ * @{ */
+#define SHFL_NO_RESULT                                  0
+#define SHFL_PATH_NOT_FOUND                             1
+#define SHFL_FILE_NOT_FOUND                             2
+#define SHFL_FILE_EXISTS                                3
+#define SHFL_FILE_CREATED                               4
+#define SHFL_FILE_REPLACED                              5
+/** @} */
+
+#pragma pack(push, 1)
+/** Object attributes (SHFLFSOBJATTR): fMode has the RTFS_XXX bits, the DOS
+ *  attributes shifted by RTFS_DOS_SHIFT. */
+typedef struct SHFLFSOBJATTR
+{
+    UINT32 fMode;
+    /** SHFLFSOBJATTRADD_XXX, 1 (nothing) from VBoxSF's requests. */
+    UINT32 enmAdditional;
+    UCHAR  abUnion[36];
+} SHFLFSOBJATTR;
+
+/** Object information (SHFLFSOBJINFO); times are nanoseconds since
+ *  1970-01-01 UTC (RTTIMESPEC). */
+typedef struct SHFLFSOBJINFO
+{
+    INT64 cbObject;
+    INT64 cbAllocated;
+    INT64 AccessTime;
+    INT64 ModificationTime;
+    INT64 ChangeTime;
+    INT64 BirthTime;
+    SHFLFSOBJATTR Attr;
+} SHFLFSOBJINFO;
+
+/** SHFL_FN_CREATE parameters and results. */
+typedef struct SHFLCREATEPARMS
+{
+    /** OUT: the handle, SHFL_HANDLE_NIL if none. */
+    SHFLHANDLE Handle;
+    /** OUT: SHFL_XXX result (SHFLCREATERESULT). */
+    UINT32 Result;
+    /** IN: SHFL_CF_XXX. */
+    UINT32 CreateFlags;
+    /** IN: attributes for a new object; OUT: the object's. */
+    SHFLFSOBJINFO Info;
+} SHFLCREATEPARMS;
+#pragma pack(pop)
+
+/** A SHFL_FN_LIST entry; the next one follows the name's String at
+ *  offset SHFLDIRINFO_NAME_OFFSET + name.u16Size. */
+typedef struct SHFLDIRINFO
+{
+    SHFLFSOBJINFO Info;
+    /** Length of the 8.3 name in characters, 0 if the host has none. */
+    USHORT cucShortName;
+    WCHAR  uszShortName[14];
+    SHFLSTRING name;
+} SHFLDIRINFO;
+/** Offset of SHFLDIRINFO::name.String. */
+#define SHFLDIRINFO_NAME_OFFSET                         (92 + 2 + 28 + SHFLSTRING_HEADER_SIZE)
+
+/** Volume information (SHFL_INFO_VOLUME). */
+typedef struct SHFLVOLINFO
+{
+    INT64  ullTotalAllocationBytes;
+    INT64  ullAvailableAllocationBytes;
+    UINT32 ulBytesPerAllocationUnit;
+    UINT32 ulBytesPerSector;
+    UINT32 ulSerial;
+    /** SHFLFSPROPERTIES. */
+    UINT32 cbMaxComponent;
+    UCHAR  fRemote;
+    UCHAR  fCaseSensitive;
+    UCHAR  fReadOnly;
+    UCHAR  fSupportsUnicode;
+    UCHAR  fCompressed;
+    UCHAR  fFileCompression;
+    UCHAR  abPadding[2];
+} SHFLVOLINFO;
+
+
 #pragma pack(pop)
 
 /** Compile time size check (C89: a negative array size fails to compile). */
@@ -1433,5 +1727,13 @@ VMMDEV_ASSERT_SIZE(VMMDevHGCMDisconnect, 32+4);
 VMMDEV_ASSERT_SIZE(VMMDevHGCMCall, 32+12);
 VMMDEV_ASSERT_SIZE(HGCMFunctionParameter32, 4+8);
 VMMDEV_ASSERT_SIZE(VMMDevHGCMCancel2, 24+8);
+/* Sizes from the AssertCompileSize statements in include/VBox/shflsvc.h. */
+VMMDEV_ASSERT_SIZE(SHFLSTRING, 6);
+VMMDEV_ASSERT_SIZE(SHFLMAPPING, 8);
+VMMDEV_ASSERT_SIZE(SHFLFSOBJATTR, 44);
+VMMDEV_ASSERT_SIZE(SHFLFSOBJINFO, 92);
+VMMDEV_ASSERT_SIZE(SHFLCREATEPARMS, 108);
+VMMDEV_ASSERT_SIZE(SHFLDIRINFO, SHFLDIRINFO_NAME_OFFSET + 2);
+VMMDEV_ASSERT_SIZE(SHFLVOLINFO, 40);
 
 #endif /* !VBOXGUEST98_VMMDEV_H */

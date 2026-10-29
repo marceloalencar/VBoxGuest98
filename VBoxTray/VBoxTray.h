@@ -129,6 +129,10 @@ void     VBoxGstCtrlInit(void);
 void     VBoxGstCtrlStop(void);
 unsigned __stdcall VBoxGstCtrlThread(void *pvUser);
 
+void     VBoxAutoMountInit(void);
+void     VBoxAutoMountStop(void);
+unsigned __stdcall VBoxAutoMountThread(void *pvUser);
+
 
 /*********************************************************************************************************************************
 *   Guest properties (GuestProp.c)                                                                                               *

@@ -26,6 +26,7 @@ SOURCES= \
         GuestProp.c \
         GstCtrl.c \
         GstCtrlFile.c \
+        AutoMount.c \
         VbglR3.c \
         VBoxTray.rc
 
