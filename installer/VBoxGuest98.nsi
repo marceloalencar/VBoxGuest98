@@ -6,8 +6,9 @@
 ; Windows 98/ME can't install a driver programmatically from 32-bit code, so the
 ; installer preinstalls it, as the Oney WDM book suggests for these systems:
 ;  - copies VBoxGst.sys, VBoxTray.exe and VBoxMou.vxd to their final places;
-;  - copies an INF without CopyFiles lines to INF\OTHER under the name the
-;    Add Hardware wizard would use (<Provider><file name>);
+;  - copies an INF without CopyFiles lines to INF, the only folder in the
+;    DevicePath of Windows ME (Windows 98 also has INF\OTHER in
+;    OtherDevicePath, where the Add Hardware wizard puts it);
 ;  - sets ConfigFlags to CONFIGFLAG_REINSTALL on every VirtualBox Guest Device
 ;    under HKLM\Enum\PCI.
 ; At the next boot Windows (re)installs the device from that INF without asking
@@ -44,7 +45,11 @@
 !define PCI_KEY         "Enum\PCI"
 !define DEVICE_PREFIX   "VEN_80EE&DEV_CAFE"
 !define VENDOR_PREFIX   "VEN_80EE&"
-!define INF_NAME        "VBoxGuest98VBoxGst.inf"
+!define INF_NAME        "VBoxGst.inf"
+; Where the Add Hardware wizard and installers up to 0.3.0 put it.  An update
+; keeps it: Windows doesn't reinstall a working device, so its driver key
+; still names that file (InfPath).  The uninstaller removes it.
+!define OTHER_INF_NAME  "VBoxGuest98VBoxGst.inf"
 !define UNINSTALLER     "VBoxGuest98Uninst.exe"
 !define TRAY_WND_CLASS  "VBoxTrayToolWndClass"
 !define TRAY_MUTEX      "VBoxTray98SingleInstance"
@@ -240,7 +245,7 @@ Section "${PRODUCT}" SecMain
   !insertmacro INSTALL_FILE "..\VBoxTray\obj\i386\${BUILDTYPE}\VBoxTray.exe" "$SYSDIR" "VBoxTray.exe" "VBOXTRAY.NEW"
   !insertmacro INSTALL_FILE "..\VBoxMou\obj\i386\${BUILDTYPE}\VBoxMou.vxd" "$SYSDIR" "VBoxMou.vxd" "VBOXMOU.NEW"
 
-  SetOutPath "$WINDIR\INF\OTHER"
+  SetOutPath "$WINDIR\INF"
   File "/oname=${INF_NAME}" "obj\VBoxGst.inf"
 
   StrCpy $R8 1
@@ -290,7 +295,8 @@ Section "Uninstall"
   Delete /REBOOTOK "$SYSDIR\VBoxTray.exe"
   Delete /REBOOTOK "$SYSDIR\VBoxMou.vxd"
   Delete /REBOOTOK "$WINDIR\SYSTEM32\DRIVERS\VBoxGst.sys"
-  Delete "$WINDIR\INF\OTHER\${INF_NAME}"
+  Delete "$WINDIR\INF\${INF_NAME}"
+  Delete "$WINDIR\INF\OTHER\${OTHER_INF_NAME}"
 
   ; Driver keys (Class\System\NNNN) that load VBoxGst.sys.
   StrCpy $0 0

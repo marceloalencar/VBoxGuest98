@@ -31,7 +31,7 @@ For example, from the host with guest control (`START.EXE` keeps the installer
 running when it closes VBoxTray):
 ```
 VBoxManage guestcontrol <vm> copyto --username x --password x --target-directory C:\WINDOWS\TEMP\ VBoxGuest98-x.y.z.exe
-VBoxManage guestcontrol <vm> start --username x --password x --exe C:\WINDOWS\COMMAND\START.EXE -- START.EXE C:\WINDOWS\TEMP\VBoxGuest98-x.y.z.exe /S /R
+VBoxManage guestcontrol <vm> start --username x --password x --exe C:\WINDOWS\COMMAND\START.EXE -- C:\WINDOWS\TEMP\VBoxGuest98-x.y.z.exe /S /R
 ```
 
 ## Recommended: SoftGPU
