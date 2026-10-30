@@ -28,6 +28,7 @@ SOURCES= \
         GstCtrlFile.c \
         AutoMount.c \
         AutoLogon.c \
+        Utf.c \
         VbglR3.c \
         VBoxTray.rc
 

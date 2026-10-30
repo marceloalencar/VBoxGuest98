@@ -1,0 +1,34 @@
+/** @file
+ * VBoxControl - Resources: version information.
+ */
+
+#include <windows.h>
+#include "VBoxGuest98.h"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    VBOXGUEST98_VERSION_MAJOR, VBOXGUEST98_VERSION_MINOR, VBOXGUEST98_VERSION_PATCH, 0
+ PRODUCTVERSION VBOXGUEST98_VERSION_MAJOR, VBOXGUEST98_VERSION_MINOR, VBOXGUEST98_VERSION_PATCH, 0
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+ FILEFLAGS      0
+ FILEOS         VOS__WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName",      "VBoxGuest98\0"
+            VALUE "FileDescription",  "VirtualBox Guest Additions Command Line Tool\0"
+            VALUE "FileVersion",      VBOXGUEST98_VERSION_STRING "\0"
+            VALUE "InternalName",     "VBoxControl\0"
+            VALUE "OriginalFilename", "VBoxControl.exe\0"
+            VALUE "ProductName",      "VirtualBox Guest Additions for Windows 98\0"
+            VALUE "ProductVersion",   VBOXGUEST98_VERSION_STRING "\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END

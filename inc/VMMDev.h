@@ -71,6 +71,7 @@
 #define VERR_HGCM_SERVICE_NOT_FOUND     (-2900)
 #define VINF_BUFFER_OVERFLOW            (41)
 #define VINF_TRY_AGAIN                  (52)
+#define VWRN_NOT_FOUND                  (78)
 #define VINF_HGCM_ASYNC_EXECUTE         (2903)
 
 #define RT_SUCCESS(rc)                  ((int)(rc) >= VINF_SUCCESS)
@@ -808,7 +809,25 @@ typedef struct
 /** Deletes a property.  Parms: [0] name (buffer in). */
 #define GUEST_PROP_FN_DEL_PROP                          4
 #define GUEST_PROP_FN_DEL_PROP_CPARMS                   1
+/** Lists properties.  Parms: [0] patterns separated by '|', empty for all
+ *  (buffer in), [1] name, value, timestamp (decimal) and flags strings for
+ *  each property, then an empty string (buffer out), [2] size needed (32bit
+ *  out).  VERR_BUFFER_OVERFLOW if the buffer is too small. */
+#define GUEST_PROP_FN_ENUM_PROPS                        5
+#define GUEST_PROP_FN_ENUM_PROPS_CPARMS                 3
+/** Waits for a property matching the patterns to change.  Parms: [0]
+ *  patterns (buffer in), [1] timestamp of the last change seen, 0 for the
+ *  next one (64bit in/out), [2] name, value and flags strings (buffer out; an
+ *  empty value means the property was deleted), [3] size needed (32bit out).
+ *  VWRN_NOT_FOUND if the timestamp is too old: the oldest change known is
+ *  returned. */
+#define GUEST_PROP_FN_GET_NOTIFICATION                  6
+#define GUEST_PROP_FN_GET_NOTIFICATION_CPARMS           4
 /** @} */
+/** Maximum length of the flags string, terminator included. */
+#define GUEST_PROP_MAX_FLAGS_LEN                        sizeof("TRANSIENT, RDONLYGUEST, TRANSRESET")
+/** Maximum length of the patterns, terminator included. */
+#define GUEST_PROP_MAX_PATTERN_LEN                      1024
 
 
 /*********************************************************************************************************************************

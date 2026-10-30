@@ -26,7 +26,7 @@ set MSDevDir=%MSVC6DIR%\VC98
 call "%DDK98DIR%\bin\setenv.bat" %DDK98DIR% %BUILDTYPE%
 cd /d "%~dp0"
 rem build.exe does not create the target folders and the link fails without them.
-for %%d in (VBoxGst VBoxTray VBoxNP VBoxMou VBoxSF) do if not exist %%d\%OBJDIR% mkdir %%d\%OBJDIR%
+for %%d in (VBoxGst VBoxTray VBoxControl VBoxNP VBoxMou VBoxSF) do if not exist %%d\%OBJDIR% mkdir %%d\%OBJDIR%
 build -cZ
 
 rem VBoxMou.vxd: build.exe has no VxD support, so assemble and link it here.

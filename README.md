@@ -27,6 +27,8 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 - Logs start/stop, setup failures, clock adjustments, display mode changes
   and the statistics interval to the VM's `VBox.log`
 
+**VBoxControl**: Command line tool, as the official one
+
 ## Installing
 Run `VBoxGuest98-x.y.z.exe` in the guest and restart Windows when it asks.
 Command line options (upper or lower case):
@@ -61,6 +63,7 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxGst/VbglR0.c` | VMMDev request allocation (DMA common buffers) and submission |
 | `VBoxGst/Log.c` | Release logging through the backdoor port |
 | `VBoxTray/VBoxTray.c` | WinMain, tray icon, service threads |
+| `VBoxControl/VBoxControl.c` | Command line tool (guest properties, shared folders list, log) |
 | `VBoxMou/VBoxMou.asm` | VxD posting mouse moves to VMOUSE (DirectInput, MS-DOS) |
 | `VBoxSF/VBoxSFA.asm` | Shared folders VxD: device declaration, control procedure, service thunks |
 | `VBoxSF/VBoxSF.c` | Shared folders: initialization, Win32 interface, logging, helpers |
@@ -89,6 +92,7 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/AutoMount.c` | Automatic mounting of shared folders on drive letters |
 | `VBoxTray/AutoLogon.c` | Automatic logon with credentials from the host |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode, HGCM call builder |
+| `VBoxTray/Utf.c` | UTF-8 and ANSI code page conversions |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 | `installer/VBoxGuest98.nsi` | Installer and uninstaller (NSIS 2.46) |
 

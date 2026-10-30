@@ -17,6 +17,9 @@
  *  - VMInfo.c     Guest properties with the OS, user and network information
  *                 (GuestProp.c: the VBoxGuestPropSvc calls).
  *  - VbglR3.c     Access to the VBoxGst driver (VBoxGuest98.h interface).
+ *  - Utf.c        Conversions between UTF-8 and the ANSI code page.
+ *
+ * VBoxControl links VbglR3, GuestProp and Utf too.
  */
 
 #ifndef VBOXTRAY_H
@@ -143,5 +146,10 @@ unsigned __stdcall VBoxAutoMountThread(void *pvUser);
 
 int VBoxGuestPropWrite(HANDLE hDevice, UINT32 idClient, const char *pszName, const char *pszValue, const char *pszFlags);
 int VBoxGuestPropRead(HANDLE hDevice, UINT32 idClient, const char *pszName, char *pszValue, DWORD cbValue);
+int VBoxGuestPropReadEx(HANDLE hDevice, UINT32 idClient, const char *pszName, char *pszValue, DWORD cbValue,
+                        UINT64 *puTimestamp, char *pszFlags, DWORD cbFlags);
+int VBoxGuestPropEnum(HANDLE hDevice, UINT32 idClient, const char *pszPatterns, char **ppszList);
+int VBoxGuestPropWait(HANDLE hDevice, UINT32 idClient, const char *pszPatterns, UINT32 cMsTimeout, UINT64 *puTimestamp,
+                      char *pszName, DWORD cbName, char *pszValue, DWORD cbValue, char *pszFlags, DWORD cbFlags);
 
 #endif /* !VBOXTRAY_H */

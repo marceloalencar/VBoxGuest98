@@ -6,6 +6,7 @@
 ; Windows 98/ME can't install a driver programmatically from 32-bit code, so the
 ; installer preinstalls it, as the Oney WDM book suggests for these systems:
 ;  - copies VBoxGst.sys, VBoxTray.exe, VBoxMou.vxd, VBoxSF.vxd and VBoxNP.dll
+;    (and VBoxControl.exe to the Windows folder, which is on the PATH)
 ;    to their final places, VBoxSF as a static VxD (it registers with IFSMgr
 ;    at boot) and VBoxNP as a network provider (MPR loads it at boot);
 ;  - copies an INF without CopyFiles lines to INF, the only folder in the
@@ -255,6 +256,7 @@ Section "${PRODUCT}" SecMain
   ; device, so write it here as well.
   WriteRegStr HKLM "${RUNSERVICES_KEY}" "VBoxTray" "$SYSDIR\VBoxTray.exe"
   DeleteRegValue HKLM "${RUN_KEY}" "VBoxTray"
+  !insertmacro INSTALL_FILE "..\VBoxControl\obj\i386\${BUILDTYPE}\VBoxControl.exe" "$WINDIR" "VBoxControl.exe" "VBOXCTL.NEW"
   !insertmacro INSTALL_FILE "..\VBoxMou\obj\i386\${BUILDTYPE}\VBoxMou.vxd" "$SYSDIR" "VBoxMou.vxd" "VBOXMOU.NEW"
   !insertmacro INSTALL_FILE "..\VBoxSF\obj\i386\${BUILDTYPE}\VBoxSF.vxd" "$SYSDIR" "VBoxSF.vxd" "VBOXSF.NEW"
   WriteRegStr HKLM "${VXD_KEY}" "StaticVxD" "$SYSDIR\VBoxSF.vxd"
@@ -320,6 +322,7 @@ Section "Uninstall"
   DeleteRegValue HKLM "${RUNSERVICES_KEY}" "VBoxTray"
   DeleteRegValue HKLM "${RUN_KEY}" "VBoxTray"
   Delete /REBOOTOK "$SYSDIR\VBoxTray.exe"
+  Delete /REBOOTOK "$WINDIR\VBoxControl.exe"
   Delete /REBOOTOK "$SYSDIR\VBoxMou.vxd"
   DeleteRegKey HKLM "${VXD_KEY}"
   Delete /REBOOTOK "$SYSDIR\VBoxSF.vxd"

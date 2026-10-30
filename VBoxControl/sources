@@ -1,0 +1,31 @@
+TARGETNAME=VBoxControl
+TARGETPATH=obj
+TARGETTYPE=PROGRAM
+UMTYPE=console
+UMENTRY=main
+
+INCLUDES=..\inc;..\VBoxTray;$(MSVCDIR)\include
+
+SOURCES= \
+        VBoxControl.c \
+        VBoxControl.rc
+
+# VBoxTray's VbglR3.c, GuestProp.c and Utf.c, as VBoxTray compiled them
+# (build.exe takes no ..\ in SOURCES; it compiles every directory before
+# linking any).
+TARGETLIBS= \
+        ..\VBoxTray\obj\*\VbglR3.obj \
+        ..\VBoxTray\obj\*\GuestProp.obj \
+        ..\VBoxTray\obj\*\Utf.obj \
+        $(SDK_LIB_PATH)\user32.lib
+
+LIB=$(MSVCDIR)\lib
+INCLUDE=$(MSVCDIR)\include
+
+MSC_WARNING_LEVEL=/W3 /WX
+
+USER_C_FLAGS=/MT
+C_DEFINES=/DW32
+USE_MSVCRT=1
+# The Windows 98 DDK has no coffbase.txt to look the base address up in.
+UMBASE=0x400000
