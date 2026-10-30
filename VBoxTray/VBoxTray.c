@@ -3,11 +3,12 @@
  *
  * Runs the service threads (mouse integration, time synchronization, shared
  * clipboard, guest statistics, display resizing, drag and drop, guest
- * properties) and shows a tray icon with an Exit command.  Started before
- * logon through the RunServices registry key (see VBoxGst.inf), so the mouse
- * and the other services already work at the logon dialog; as a service
- * process (RegisterServiceProcess) it outlives logoffs and only stops when
- * Windows shuts down.  There is no taskbar before logon: the icon is added
+ * properties, guest control, shared folder auto-mount, automatic logon) and
+ * shows a tray icon with an Exit command.  Started before logon through the
+ * RunServices registry key (see VBoxGst.inf), so the mouse and the other
+ * services already work at the logon dialog; as a service process
+ * (RegisterServiceProcess) it outlives logoffs and only stops when Windows
+ * shuts down.  There is no taskbar before logon: the icon is added
  * when Explorer announces it (TaskbarCreated).
  */
 
@@ -88,6 +89,7 @@ static VBOXTRAYSERVICE g_aServices[] =
     { "VMInfo",    VBoxVMInfoInit,    VBoxVMInfoThread,    VBoxVMInfoStop,    NULL },
     { "GstCtrl",   VBoxGstCtrlInit,   VBoxGstCtrlThread,   VBoxGstCtrlStop,   NULL },
     { "AutoMount", VBoxAutoMountInit, VBoxAutoMountThread, VBoxAutoMountStop, NULL },
+    { "AutoLogon", NULL,              VBoxAutoLogonThread, NULL,              NULL },
 };
 
 static HINSTANCE g_hInstance;

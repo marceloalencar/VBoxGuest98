@@ -359,6 +359,37 @@ typedef struct
     UINT64 idSession;
 } VMMDevReqSessionId;
 
+/** Size of a string field in the credentials request (including the terminator). */
+#define VMMDEV_CREDENTIALS_SZ_SIZE              128
+
+/** VMMDevReq_QueryCredentials. */
+typedef struct
+{
+    VMMDevRequestHeader header;
+    /** IN/OUT: Request flags (VMMDEV_CREDENTIALS_XXX). */
+    UINT32 u32Flags;
+    /** OUT: User name (UTF-8). */
+    char szUserName[VMMDEV_CREDENTIALS_SZ_SIZE];
+    /** OUT: Password (UTF-8). */
+    char szPassword[VMMDEV_CREDENTIALS_SZ_SIZE];
+    /** OUT: Domain name (UTF-8). */
+    char szDomain[VMMDEV_CREDENTIALS_SZ_SIZE];
+} VMMDevCredentials;
+
+/** @name VMMDevCredentials::u32Flags
+ * @{ */
+/** IN: Ask whether the host has logon credentials. */
+#define VMMDEV_CREDENTIALS_QUERYPRESENCE        (1U << 1)
+/** IN: Read the logon credentials. */
+#define VMMDEV_CREDENTIALS_READ                 (1U << 2)
+/** IN: Clear the logon credentials on the host (can be combined with READ). */
+#define VMMDEV_CREDENTIALS_CLEAR                (1U << 3)
+/** OUT: The host has logon credentials. */
+#define VMMDEV_CREDENTIALS_PRESENT              (1U << 16)
+/** OUT: The credentials must not be used for a logon at the VM's console. */
+#define VMMDEV_CREDENTIALS_NOLOCALLOGON         (1U << 17)
+/** @} */
+
 /** VMMDevReq_AcknowledgeEvents. */
 typedef struct
 {
@@ -1700,6 +1731,7 @@ VMMDEV_ASSERT_SIZE(VMMDevReqMouseStatus, 24+12);
 VMMDEV_ASSERT_SIZE(VMMDevReqHostVersion, 24+16);
 VMMDEV_ASSERT_SIZE(VMMDevReqHostTime, 24+8);
 VMMDEV_ASSERT_SIZE(VMMDevReqSessionId, 24+8);
+VMMDEV_ASSERT_SIZE(VMMDevCredentials, 24+4+3*128);
 VMMDEV_ASSERT_SIZE(VMMDevEvents, 24+4);
 VMMDEV_ASSERT_SIZE(VMMDevCtlGuestFilterMask, 24+8);
 VMMDEV_ASSERT_SIZE(VMMDevReportGuestInfo, 24+8);

@@ -22,6 +22,7 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
   shown in the VM's session information and `VBoxManage guestproperty enumerate`
 - Guest control: `VBoxManage guestcontrol`
 - Shared folders auto-mount
+- Automatic logon: Windows and Microsoft Network logons
 - Reports the VBoxTrayClient facility status to the host
 - Logs start/stop, setup failures, clock adjustments, display mode changes
   and the statistics interval to the VM's `VBox.log`
@@ -86,6 +87,7 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/GstCtrl.c` | Guest control: sessions and programs started from the host |
 | `VBoxTray/GstCtrlFile.c` | Guest control: files, directories and file systems |
 | `VBoxTray/AutoMount.c` | Automatic mounting of shared folders on drive letters |
+| `VBoxTray/AutoLogon.c` | Automatic logon with credentials from the host |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode, HGCM call builder |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 | `installer/VBoxGuest98.nsi` | Installer and uninstaller (NSIS 2.46) |

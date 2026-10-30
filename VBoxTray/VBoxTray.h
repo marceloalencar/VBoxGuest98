@@ -42,6 +42,8 @@ int    VbglR3SetMouseStatus(HANDLE hDevice, UINT32 fFeatures);
 int    VbglR3GetMouseStatus(HANDLE hDevice, UINT32 *pfFeatures, INT32 *px, INT32 *py);
 int    VbglR3GetHostTime(HANDLE hDevice, UINT64 *pmsUnixEpoch);
 int    VbglR3QuerySessionId(HANDLE hDevice, UINT64 *pidSession);
+int    VbglR3CredentialsQueryAvailability(HANDLE hDevice);
+int    VbglR3CredentialsRetrieve(HANDLE hDevice, VMMDevCredentials *pCreds);
 int    VbglR3ReportFacilityStatus(HANDLE hDevice, VBoxGuestFacilityType enmFacility, VBoxGuestFacilityStatus enmStatus);
 int    VbglR3HgcmConnect(HANDLE hDevice, const char *pszService, UINT32 *pidClient);
 int    VbglR3HgcmDisconnect(HANDLE hDevice, UINT32 idClient);
@@ -98,6 +100,7 @@ unsigned __stdcall VBoxTimeSyncThread(void *pvUser);
 unsigned __stdcall VBoxStatsThread(void *pvUser);
 unsigned __stdcall VBoxDisplayThread(void *pvUser);
 unsigned __stdcall VBoxSeamlessThread(void *pvUser);
+unsigned __stdcall VBoxAutoLogonThread(void *pvUser);
 
 void     VBoxClipboardInit(void);
 void     VBoxClipboardStop(void);

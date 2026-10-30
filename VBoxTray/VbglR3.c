@@ -217,6 +217,46 @@ int VbglR3QuerySessionId(HANDLE hDevice, UINT64 *pidSession)
 }
 
 /**
+ * Checks whether the host has logon credentials for the guest
+ * (VbglR3CredentialsQueryAvailability).
+ *
+ * @returns VINF_SUCCESS if it has, VERR_NOT_FOUND if not, or an error.
+ */
+int VbglR3CredentialsQueryAvailability(HANDLE hDevice)
+{
+    VMMDevCredentials Req;
+    int rc;
+
+    vbglR3GRInit(&Req.header, sizeof(Req), VMMDevReq_QueryCredentials);
+    Req.u32Flags = VMMDEV_CREDENTIALS_QUERYPRESENCE;
+    rc = vbglR3GRPerform(hDevice, &Req.header);
+    if (RT_SUCCESS(rc) && !(Req.u32Flags & VMMDEV_CREDENTIALS_PRESENT))
+        rc = VERR_NOT_FOUND;
+    return rc;
+}
+
+/**
+ * Reads the logon credentials and clears them on the host, so they are used
+ * once (VbglR3CredentialsRetrieve).  The caller wipes them after use.
+ *
+ * @returns VBox status code.
+ * @param   pCreds      Where to return them; u32Flags tells whether a logon at
+ *                      the VM's console is allowed (VMMDEV_CREDENTIALS_NOLOCALLOGON).
+ */
+int VbglR3CredentialsRetrieve(HANDLE hDevice, VMMDevCredentials *pCreds)
+{
+    int rc;
+
+    vbglR3GRInit(&pCreds->header, sizeof(*pCreds), VMMDevReq_QueryCredentials);
+    pCreds->u32Flags = VMMDEV_CREDENTIALS_READ | VMMDEV_CREDENTIALS_CLEAR;
+    rc = vbglR3GRPerform(hDevice, &pCreds->header);
+    pCreds->szUserName[sizeof(pCreds->szUserName) - 1] = '\0';
+    pCreds->szPassword[sizeof(pCreds->szPassword) - 1] = '\0';
+    pCreds->szDomain[sizeof(pCreds->szDomain) - 1] = '\0';
+    return rc;
+}
+
+/**
  * Reports the status of a guest facility to the host.
  */
 int VbglR3ReportFacilityStatus(HANDLE hDevice, VBoxGuestFacilityType enmFacility, VBoxGuestFacilityStatus enmStatus)
