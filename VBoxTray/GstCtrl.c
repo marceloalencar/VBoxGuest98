@@ -19,7 +19,8 @@
  *  - Programs are started with CreateProcess, with anonymous pipes for
  *    standard input and, when the host wants them, standard output and
  *    error; the host's environment changes are applied to VBoxTray's
- *    environment.  A thread per program reports when it ends.  The host
+ *    environment.  A thread per program reports when it ends, once the
+ *    host has read what the program left in its output pipes.  The host
  *    polls the output (HOST_MSG_EXEC_GET_OUTPUT), so the pipes are only
  *    read when it asks, without blocking.
  *  - The file, directory and file system messages are handled by
@@ -41,6 +42,10 @@
 #define VBOXGSTCTRL_AFFINITY_SIZE       64
 /** How long the root waits for a closing session thread (ms). */
 #define VBOXGSTCTRL_CLOSE_WAIT_MS       10000
+/** How long an ended program's output may take to be read by the host (ms). */
+#define VBOXGSTCTRL_OUTPUT_WAIT_MS      5000
+/** How often to check meanwhile (ms). */
+#define VBOXGSTCTRL_OUTPUT_POLL_MS      50
 /** Failed waits in a row before the root gives up. */
 #define VBOXGSTCTRL_MAX_ERRORS          10
 /** The guest features reported to the host. */
@@ -74,6 +79,8 @@ typedef struct VBOXGSTCTRLPROC
     HANDLE      hStdErrR;
     /** Set when the host ended the program (HOST_MSG_EXEC_TERMINATE). */
     volatile BOOL fTerminated;
+    /** Set when the program has ended (its output pipes get no more data). */
+    volatile BOOL fEnded;
     /** The executable, for the log. */
     char        szExe[MAX_PATH];
 } VBOXGSTCTRLPROC;
@@ -532,6 +539,27 @@ static VBOXGSTCTRLPROC *vboxGstCtrlProcRetain(VBOXGSTCTRLSESSION *pSession, UINT
 }
 
 /**
+ * Waits until the host has read all a program left in its output pipes.
+ *
+ * The host stops asking for output once it is told the program ended, and a
+ * program's last output may still be in the pipes then (with COMMAND.COM the
+ * process is REDIR32.EXE, which can end before the pipes are empty), so the
+ * end is only reported once the session thread has met the end of the pipes
+ * (it closes them then).  Bounded, as a program the ended one started may
+ * still hold the pipes.
+ */
+static void vboxGstCtrlProcWaitForOutput(VBOXGSTCTRLPROC *pProc, HANDLE hEvtStop)
+{
+    DWORD msStart = GetTickCount();
+
+    pProc->fEnded = TRUE;
+    while (   (*(HANDLE volatile *)&pProc->hStdOutR || *(HANDLE volatile *)&pProc->hStdErrR)
+           && GetTickCount() - msStart < VBOXGSTCTRL_OUTPUT_WAIT_MS)
+        if (WaitForSingleObject(hEvtStop, VBOXGSTCTRL_OUTPUT_POLL_MS) != WAIT_TIMEOUT)
+            break;
+}
+
+/**
  * Waits for a program to end and reports it, or ends it at its time limit.
  */
 static unsigned __stdcall vboxGstCtrlProcThread(void *pvUser)
@@ -550,6 +578,7 @@ static unsigned __stdcall vboxGstCtrlProcThread(void *pvUser)
     if (dwWait == WAIT_OBJECT_0)
     {
         GetExitCodeProcess(pProc->hProcess, &dwExit);
+        vboxGstCtrlProcWaitForOutput(pProc, pSession->hEvtStop);
         if (pProc->fTerminated)
         {
             /* Like upstream, a program the host ended is reported down. */
@@ -565,6 +594,7 @@ static unsigned __stdcall vboxGstCtrlProcThread(void *pvUser)
     else if (dwWait == WAIT_TIMEOUT)
     {
         uStatus = TerminateProcess(pProc->hProcess, 1) ? PROC_STS_TOK : PROC_STS_TOA;
+        vboxGstCtrlProcWaitForOutput(pProc, pSession->hEvtStop);
         VBoxTrayLogRel("GstCtrl: \"%s\" reached its time limit of %lu ms, %s\n", pProc->szExe, pProc->cMsTimeLimit,
                        uStatus == PROC_STS_TOK ? "ended" : "couldn't be ended");
     }
@@ -975,8 +1005,15 @@ static void vboxGstCtrlSessionOutput(VBOXGSTCTRLSESSION *pSession, UINT32 idClie
         phPipe = uHandle == GUEST_PROC_OUT_H_STDERR ? &pProc->hStdErrR : &pProc->hStdOutR;
         if (*phPipe)
         {
-            /* Never blocks: only what is there is read. */
-            if (PeekNamedPipe(*phPipe, NULL, 0, NULL, &cbAvail, NULL))
+            /* Checked before looking at the pipe: whatever the program wrote
+               is in it by then. */
+            BOOL fEnded = pProc->fEnded;
+
+            /* Never blocks: only what is there is read.  Windows 9x doesn't
+               fail PeekNamedPipe when the writer is gone (ERROR_BROKEN_PIPE,
+               as NT does), so an empty pipe of an ended program is its end
+               too. */
+            if (PeekNamedPipe(*phPipe, NULL, 0, NULL, &cbAvail, NULL) && (cbAvail || !fEnded))
             {
                 if (cbAvail && !ReadFile(*phPipe, pbData, cbAvail < VBOXGSTCTRL_OUTPUT_SIZE ? cbAvail
                                                                                           : VBOXGSTCTRL_OUTPUT_SIZE,
@@ -985,7 +1022,7 @@ static void vboxGstCtrlSessionOutput(VBOXGSTCTRLSESSION *pSession, UINT32 idClie
             }
             else
             {
-                /* The program closed its end (ERROR_BROKEN_PIPE): nothing more to come. */
+                /* Nothing more to come. */
                 CloseHandle(*phPipe);
                 *phPipe = NULL;
             }
