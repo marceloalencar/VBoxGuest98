@@ -43,6 +43,14 @@
 #define VBOXTRAY_DRIVER_WAIT_MS     120000
 /** How often to try opening the driver meanwhile (ms). */
 #define VBOXTRAY_DRIVER_RETRY_MS    1000
+/** How often to try after that while the device waits to be reinstalled
+ *  (ms): Windows 98 only does it after logon. */
+#define VBOXTRAY_DRIVER_SLOW_RETRY_MS 10000
+/** Where the VirtualBox Guest Device instances are, relative to HKLM. */
+#define VBOXTRAY_PCI_KEY            "Enum\\PCI"
+#define VBOXTRAY_DEVICE_PREFIX      "VEN_80EE&DEV_CAFE"
+/** ConfigFlags bit the installer sets for Windows to reinstall the device. */
+#define VBOXTRAY_CONFIGFLAG_REINSTALL 0x20
 /** RegisterServiceProcess (KERNEL32, Windows 9x only): keeps the process
  *  running across logoffs. */
 #define VBOXTRAY_RSP_SIMPLE_SERVICE 1
@@ -269,7 +277,61 @@ static void vboxTrayStopServices(void)
 }
 
 /**
- * Opens the driver, waiting for it when Windows hasn't started it yet.
+ * Tells whether a VirtualBox Guest Device waits to be reinstalled, as the
+ * installer leaves it until the next boot.
+ */
+static BOOL vboxTrayDeviceReinstallPending(void)
+{
+    char szDevice[64];
+    char szKey[MAX_PATH];
+    HKEY hPci;
+    DWORD iDevice;
+    BOOL fPending = FALSE;
+
+    if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, VBOXTRAY_PCI_KEY, 0, KEY_READ, &hPci) != ERROR_SUCCESS)
+        return FALSE;
+
+    for (iDevice = 0; !fPending; iDevice++)
+    {
+        char szInstance[64];
+        HKEY hDevice;
+        DWORD iInstance;
+        DWORD cchDevice = sizeof(szDevice);
+        if (RegEnumKeyEx(hPci, iDevice, szDevice, &cchDevice, NULL, NULL, NULL, NULL) != ERROR_SUCCESS)
+            break;
+        if (_strnicmp(szDevice, VBOXTRAY_DEVICE_PREFIX, sizeof(VBOXTRAY_DEVICE_PREFIX) - 1) != 0)
+            continue;
+        if (RegOpenKeyEx(hPci, szDevice, 0, KEY_READ, &hDevice) != ERROR_SUCCESS)
+            continue;
+
+        for (iInstance = 0; !fPending; iInstance++)
+        {
+            HKEY hInstance;
+            DWORD fFlags = 0;
+            DWORD cbFlags = sizeof(fFlags);
+            DWORD cchInstance = sizeof(szInstance);
+            if (RegEnumKeyEx(hDevice, iInstance, szInstance, &cchInstance, NULL, NULL, NULL, NULL) != ERROR_SUCCESS)
+                break;
+            wsprintf(szKey, "%s\\%s", szDevice, szInstance);
+            if (RegOpenKeyEx(hPci, szKey, 0, KEY_READ, &hInstance) != ERROR_SUCCESS)
+                continue;
+            if (   RegQueryValueEx(hInstance, "ConfigFlags", NULL, NULL, (BYTE *)&fFlags, &cbFlags) == ERROR_SUCCESS
+                && cbFlags == sizeof(fFlags))
+                fPending = (fFlags & VBOXTRAY_CONFIGFLAG_REINSTALL) != 0;
+            RegCloseKey(hInstance);
+        }
+        RegCloseKey(hDevice);
+    }
+
+    RegCloseKey(hPci);
+    return fPending;
+}
+
+/**
+ * Opens the driver, waiting for it when Windows hasn't started it yet: up to
+ * VBOXTRAY_DRIVER_WAIT_MS, longer while the device waits to be reinstalled
+ * (the first boot after installing, until someone logs on on Windows 98),
+ * and VBOXTRAY_DRIVER_WAIT_MS again from the moment it is.
  *
  * @returns Device handle, INVALID_HANDLE_VALUE when it never came.
  */
@@ -279,9 +341,18 @@ static HANDLE vboxTrayWaitForDriver(void)
     for (;;)
     {
         HANDLE hDevice = VbglR3Open();
-        if (hDevice != INVALID_HANDLE_VALUE || GetTickCount() - dwStart >= VBOXTRAY_DRIVER_WAIT_MS)
+        if (hDevice != INVALID_HANDLE_VALUE)
             return hDevice;
-        Sleep(VBOXTRAY_DRIVER_RETRY_MS);
+        if (GetTickCount() - dwStart < VBOXTRAY_DRIVER_WAIT_MS)
+            Sleep(VBOXTRAY_DRIVER_RETRY_MS);
+        else if (vboxTrayDeviceReinstallPending())
+        {
+            /* Wait the full time again once Windows reinstalls it. */
+            dwStart = GetTickCount();
+            Sleep(VBOXTRAY_DRIVER_SLOW_RETRY_MS);
+        }
+        else
+            return INVALID_HANDLE_VALUE;
     }
 }
 
