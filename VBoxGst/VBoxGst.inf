@@ -31,8 +31,8 @@ HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,VBoxGst.sys
 
 [VBoxTray_AddReg]
-; Starts VBoxTray at logon.
-HKLM,"Software\Microsoft\Windows\CurrentVersion\Run",VBoxTray,,"%11%\VBoxTray.exe"
+; Starts VBoxTray at boot, before logon.
+HKLM,"Software\Microsoft\Windows\CurrentVersion\RunServices",VBoxTray,,"%11%\VBoxTray.exe"
 
 [ControlFlags]
 

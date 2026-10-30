@@ -10,7 +10,7 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 
 **VBoxNP**: Network provider DLL for the shared folders
 
-**VBoxTray**: Tray application started at logon:
+**VBoxTray**: Tray application started at boot, before logon (RunServices):
 - Mouse pointer integration
 - Time synchronization
 - Shared clipboard (text, images, HTML, files and folders

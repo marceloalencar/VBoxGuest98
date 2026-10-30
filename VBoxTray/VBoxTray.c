@@ -3,8 +3,12 @@
  *
  * Runs the service threads (mouse integration, time synchronization, shared
  * clipboard, guest statistics, display resizing, drag and drop, guest
- * properties) and shows a tray icon with an Exit command.  Started at logon
- * through the Run registry key (see VBoxGst.inf).
+ * properties) and shows a tray icon with an Exit command.  Started before
+ * logon through the RunServices registry key (see VBoxGst.inf), so the mouse
+ * and the other services already work at the logon dialog; as a service
+ * process (RegisterServiceProcess) it outlives logoffs and only stops when
+ * Windows shuts down.  There is no taskbar before logon: the icon is added
+ * when Explorer announces it (TaskbarCreated).
  */
 
 #include "VBoxTray.h"
@@ -33,6 +37,14 @@
 #define IDM_VBOXTRAY_EXIT           100
 /** How long to wait for the service threads on exit (ms). */
 #define VBOXTRAY_THREAD_EXIT_MS     5000
+/** How long to wait for the driver at startup (ms): on the boot that
+ *  installs the device Windows starts it after the RunServices programs. */
+#define VBOXTRAY_DRIVER_WAIT_MS     120000
+/** How often to try opening the driver meanwhile (ms). */
+#define VBOXTRAY_DRIVER_RETRY_MS    1000
+/** RegisterServiceProcess (KERNEL32, Windows 9x only): keeps the process
+ *  running across logoffs. */
+#define VBOXTRAY_RSP_SIMPLE_SERVICE 1
 
 /* Windows 98 (shell32 4.72) only accepts the original NOTIFYICONDATA. */
 #ifndef NOTIFYICONDATA_V1_SIZE
@@ -336,7 +348,10 @@ static LRESULT CALLBACK vboxTrayWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPA
             return 0;
 
         case WM_ENDSESSION:
-            if (wParam)
+            /* A logoff ends the session of the user only; the services stay. */
+            if (wParam && (lParam & ENDSESSION_LOGOFF))
+                VBoxTrayLogRel("the user logs off\n");
+            else if (wParam)
                 DestroyWindow(hwnd);
             return 0;
 
@@ -414,6 +429,37 @@ static void vboxTrayStopServices(void)
 }
 
 /**
+ * Opens the driver, waiting for it when Windows hasn't started it yet.
+ *
+ * @returns Device handle, INVALID_HANDLE_VALUE when it never came.
+ */
+static HANDLE vboxTrayWaitForDriver(void)
+{
+    DWORD dwStart = GetTickCount();
+    for (;;)
+    {
+        HANDLE hDevice = VbglR3Open();
+        if (hDevice != INVALID_HANDLE_VALUE || GetTickCount() - dwStart >= VBOXTRAY_DRIVER_WAIT_MS)
+            return hDevice;
+        Sleep(VBOXTRAY_DRIVER_RETRY_MS);
+    }
+}
+
+/**
+ * Makes this a service process, which Windows 9x doesn't end at logoff.
+ */
+static void vboxTrayRegisterServiceProcess(void)
+{
+    typedef DWORD (WINAPI *PFNREGISTERSERVICEPROCESS)(DWORD idProcess, DWORD dwType);
+    PFNREGISTERSERVICEPROCESS pfnRegisterServiceProcess;
+
+    pfnRegisterServiceProcess = (PFNREGISTERSERVICEPROCESS)GetProcAddress(GetModuleHandle("KERNEL32.DLL"),
+                                                                          "RegisterServiceProcess");
+    if (!pfnRegisterServiceProcess || !pfnRegisterServiceProcess(0, VBOXTRAY_RSP_SIMPLE_SERVICE))
+        VBoxTrayLogRel("RegisterServiceProcess failed, VBoxTray will stop at logoff\n");
+}
+
+/**
  * Reports the VBoxTray facility status to the host.
  */
 static void vboxTrayReportStatus(VBoxGuestFacilityStatus enmStatus)
@@ -445,7 +491,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
     }
 
     /* Nothing to do without the driver (not running in VirtualBox?). */
-    hDevice = VbglR3Open();
+    hDevice = vboxTrayWaitForDriver();
     if (hDevice == INVALID_HANDLE_VALUE)
     {
         if (hMutex)
@@ -456,6 +502,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pszCmdLin
     g_hVBoxTrayLog = hDevice;
     VBoxTrayLogRel("VBoxTray %s (VirtualBox %s r%u) started\n", VBOXGUEST98_VERSION_STRING,
                    VBOX_VERSION_STRING, VBOX_SVN_REV);
+    vboxTrayRegisterServiceProcess();
 
     g_uMsgTaskbarCreated = RegisterWindowMessage("TaskbarCreated");
 

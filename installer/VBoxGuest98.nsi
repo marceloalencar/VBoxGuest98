@@ -14,7 +14,7 @@
 ;  - sets ConfigFlags to CONFIGFLAG_REINSTALL on every VirtualBox Guest Device
 ;    under HKLM\Enum\PCI.
 ; At the next boot Windows (re)installs the device from that INF without asking
-; anything; the INF's AddReg also creates the Run entry for VBoxTray.
+; anything; the INF's AddReg also creates the RunServices entry for VBoxTray.
 ;
 ; Options: /S installs silently; /R restarts Windows without asking when the
 ; installation ends (e.g. "VBoxGuest98-x.y.z.exe /S /R" from guest control).
@@ -43,6 +43,7 @@
 !define PRODUCT         "VBoxGuest98"
 !define UNINST_KEY      "Software\Microsoft\Windows\CurrentVersion\Uninstall\VBoxGuest98"
 !define RUN_KEY         "Software\Microsoft\Windows\CurrentVersion\Run"
+!define RUNSERVICES_KEY "Software\Microsoft\Windows\CurrentVersion\RunServices"
 !define CLASS_KEY       "System\CurrentControlSet\Services\Class\System"
 !define VXD_KEY         "System\CurrentControlSet\Services\VxD\VBoxSF"
 !define NP_KEY          "System\CurrentControlSet\Services\VBoxNP\NetworkProvider"
@@ -249,6 +250,11 @@ Section "${PRODUCT}" SecMain
 
   !insertmacro INSTALL_FILE "..\VBoxGst\obj\i386\${BUILDTYPE}\VBoxGst.sys" "$WINDIR\SYSTEM32\DRIVERS" "VBoxGst.sys" "VBOXGST.NEW"
   !insertmacro INSTALL_FILE "..\VBoxTray\obj\i386\${BUILDTYPE}\VBoxTray.exe" "$SYSDIR" "VBoxTray.exe" "VBOXTRAY.NEW"
+  ; VBoxTray starts before logon (RunServices); up to 0.4.0 it started at
+  ; logon (Run).  The INF only writes the entry when Windows reinstalls the
+  ; device, so write it here as well.
+  WriteRegStr HKLM "${RUNSERVICES_KEY}" "VBoxTray" "$SYSDIR\VBoxTray.exe"
+  DeleteRegValue HKLM "${RUN_KEY}" "VBoxTray"
   !insertmacro INSTALL_FILE "..\VBoxMou\obj\i386\${BUILDTYPE}\VBoxMou.vxd" "$SYSDIR" "VBoxMou.vxd" "VBOXMOU.NEW"
   !insertmacro INSTALL_FILE "..\VBoxSF\obj\i386\${BUILDTYPE}\VBoxSF.vxd" "$SYSDIR" "VBoxSF.vxd" "VBOXSF.NEW"
   WriteRegStr HKLM "${VXD_KEY}" "StaticVxD" "$SYSDIR\VBoxSF.vxd"
@@ -311,6 +317,7 @@ FunctionEnd
 Section "Uninstall"
   Call un.CloseVBoxTray
 
+  DeleteRegValue HKLM "${RUNSERVICES_KEY}" "VBoxTray"
   DeleteRegValue HKLM "${RUN_KEY}" "VBoxTray"
   Delete /REBOOTOK "$SYSDIR\VBoxTray.exe"
   Delete /REBOOTOK "$SYSDIR\VBoxMou.vxd"
