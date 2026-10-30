@@ -24,6 +24,7 @@ SOURCES= \
         DnDUtil.c \
         VMInfo.c \
         GuestProp.c \
+        HostOpts.c \
         GstCtrl.c \
         GstCtrlFile.c \
         AutoMount.c \

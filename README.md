@@ -87,6 +87,7 @@ another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 | `VBoxTray/DnDObj.c` | Drag and drop OLE objects (data object, drop source, drop target) in C |
 | `VBoxTray/VMInfo.c` | Guest properties: OS, user and network information |
 | `VBoxTray/GuestProp.c` | Guest property HGCM calls |
+| `VBoxTray/HostOpts.c` | Service options set by the host |
 | `VBoxTray/GstCtrl.c` | Guest control: sessions and programs started from the host |
 | `VBoxTray/GstCtrlFile.c` | Guest control: files, directories and file systems |
 | `VBoxTray/AutoMount.c` | Automatic mounting of shared folders on drive letters |

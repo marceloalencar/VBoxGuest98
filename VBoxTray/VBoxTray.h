@@ -16,6 +16,7 @@
  *                 files, directories and file systems).
  *  - VMInfo.c     Guest properties with the OS, user and network information
  *                 (GuestProp.c: the VBoxGuestPropSvc calls).
+ *  - HostOpts.c   Service options set by the host (guest properties).
  *  - VbglR3.c     Access to the VBoxGst driver (VBoxGuest98.h interface).
  *  - Utf.c        Conversions between UTF-8 and the ANSI code page.
  *
@@ -151,5 +152,41 @@ int VBoxGuestPropReadEx(HANDLE hDevice, UINT32 idClient, const char *pszName, ch
 int VBoxGuestPropEnum(HANDLE hDevice, UINT32 idClient, const char *pszPatterns, char **ppszList);
 int VBoxGuestPropWait(HANDLE hDevice, UINT32 idClient, const char *pszPatterns, UINT32 cMsTimeout, UINT64 *puTimestamp,
                       char *pszName, DWORD cbName, char *pszValue, DWORD cbValue, char *pszFlags, DWORD cbFlags);
+
+
+/*********************************************************************************************************************************
+*   Service options set by the host (HostOpts.c)                                                                                 *
+*********************************************************************************************************************************/
+
+/** Where the host puts the VBoxService options. */
+#define VBOXHOSTOPTS_PREFIX         "/VirtualBox/GuestAdd/VBoxService/"
+/** How often the services read them again (ms). */
+#define VBOXHOSTOPTS_INTERVAL_MS    10000
+
+/** A host option. */
+typedef struct VBOXHOSTOPT
+{
+    /** The name, "--timesync-interval". */
+    const char *pszName;
+    /** Offset of its DWORD field in the settings. */
+    size_t      offField;
+    /** TRUE for a number, FALSE for a flag (any value). */
+    BOOL        fNumber;
+    /** A number's range; a flag stores uMin. */
+    DWORD       uMin;
+    DWORD       uMax;
+} VBOXHOSTOPT;
+
+/** The option list last read by a service. */
+typedef struct VBOXHOSTOPTSCACHE
+{
+    char  *pszList;
+    DWORD  cbList;
+    BOOL   fLoggedFailure;
+} VBOXHOSTOPTSCACHE;
+
+BOOL VBoxHostOptsRead(HANDLE hDevice, UINT32 idClient, const char *pszService, const char *pszPatterns,
+                      const VBOXHOSTOPT *paOpts, unsigned cOpts, void *pvOpts, VBOXHOSTOPTSCACHE *pCache);
+void VBoxHostOptsFree(VBOXHOSTOPTSCACHE *pCache);
 
 #endif /* !VBOXTRAY_H */

@@ -7,7 +7,9 @@
  *    /VirtualBox/GuestInfo/OS/Product, Release, Version, ServicePack and
  *    /VirtualBox/GuestAdd/Version, VersionExt, Revision.  The VirtualBox
  *    version is reported, as in ReportGuestInfo2 (see VBoxGuest98.h).
- *  - Every VBOXVMINFO_INTERVAL_MS, with the TRANSRESET flag (TRANSIENT on
+ *  - Every interval (VBOXVMINFO_INTERVAL_MS, or the host options
+ *    --vminfo-interval in ms or the global --interval in seconds, see
+ *    HostOpts.c), with the TRANSRESET flag (TRANSIENT on
  *    hosts refusing it) and only when the value changed, except for the
  *    OS/LoggedInUsers and Net/Count beacons which are always written:
  *    OS/LoggedInUsersList, LoggedInUsers, NoLoggedInUsers and
@@ -23,6 +25,7 @@
  */
 
 #include "VBoxTray.h"
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -31,7 +34,7 @@
 *   Defined Constants And Macros                                                                                                 *
 *********************************************************************************************************************************/
 
-/** How often to refresh the runtime properties (ms), as upstream. */
+/** How often to refresh the runtime properties by default (ms), as upstream. */
 #define VBOXVMINFO_INTERVAL_MS      10000
 /** Maximum number of runtime properties cached. */
 #define VBOXVMINFO_MAX_PROPS        64
@@ -39,6 +42,8 @@
 #define VBOXVMINFO_MAX_NETS         10
 /** Upper limit on a Net/Count left by an earlier run. */
 #define VBOXVMINFO_MAX_OLD_NETS     64
+/** The host options for this service. */
+#define VBOXVMINFO_OPT_PATTERNS     VBOXHOSTOPTS_PREFIX "--vminfo-interval|" VBOXHOSTOPTS_PREFIX "--interval"
 /** Prefix of the guest information properties. */
 #define VBOXVMINFO_PREFIX           "/VirtualBox/GuestInfo/"
 
@@ -86,6 +91,15 @@ typedef struct VBOXIPADAPTERINFO
     long  LeaseExpires;
 } VBOXIPADAPTERINFO;
 
+/** Settings from the host options. */
+typedef struct VBOXVMINFOOPTS
+{
+    /** --vminfo-interval (ms); 0 if not set. */
+    DWORD cMsInterval;
+    /** --interval (s); 0 if not set. */
+    DWORD cSecInterval;
+} VBOXVMINFOOPTS;
+
 typedef DWORD (WINAPI *PFNGETADAPTERSINFO)(VBOXIPADAPTERINFO *pAdapterInfo, ULONG *pcbOutBufLen);
 
 /** A runtime property written to the host. */
@@ -109,6 +123,14 @@ static UINT32 g_idVMInfoClient;
 static const char *g_pszVMInfoFlags = "TRANSRESET";
 /** The runtime properties written. */
 static VBOXVMINFOPROP g_aVMInfoProps[VBOXVMINFO_MAX_PROPS];
+/** The host options known. */
+static const VBOXHOSTOPT g_aVMInfoOpts[] =
+{
+    { "--vminfo-interval",  offsetof(VBOXVMINFOOPTS, cMsInterval),  TRUE, 50, 0xfffffffe },
+    { "--interval",         offsetof(VBOXVMINFOOPTS, cSecInterval), TRUE, 1,  0xffffffff / 1000 - 1 }
+};
+/** The option list last read. */
+static VBOXHOSTOPTSCACHE g_VMInfoOptsCache;
 static unsigned g_cVMInfoProps;
 /** Number of network adapters reported last (or by an earlier run). */
 static unsigned g_cVMInfoNets;
@@ -380,6 +402,29 @@ void VBoxVMInfoStop(void)
 }
 
 /**
+ * Reads the host options.
+ *
+ * @param   pcMsInterval    The refresh interval, updated.
+ */
+static void vboxVMInfoReadOpts(DWORD *pcMsInterval)
+{
+    VBOXVMINFOOPTS Opts = { 0, 0 };
+    DWORD cMsInterval;
+
+    if (!VBoxHostOptsRead(g_hVMInfoDevice, g_idVMInfoClient, "VMInfo", VBOXVMINFO_OPT_PATTERNS, g_aVMInfoOpts,
+                          sizeof(g_aVMInfoOpts) / sizeof(g_aVMInfoOpts[0]), &Opts, &g_VMInfoOptsCache))
+        return;
+    cMsInterval = Opts.cMsInterval  ? Opts.cMsInterval
+                : Opts.cSecInterval ? Opts.cSecInterval * 1000
+                : VBOXVMINFO_INTERVAL_MS;
+    if (cMsInterval != *pcMsInterval)
+    {
+        VBoxTrayLogRel("VMInfo: interval %lu ms\n", cMsInterval);
+        *pcMsInterval = cMsInterval;
+    }
+}
+
+/**
  * Guest information thread.
  *
  * @returns 0 on normal exit, 1 if the driver or the service could not be used.
@@ -389,6 +434,8 @@ unsigned __stdcall VBoxVMInfoThread(void *pvUser)
 {
     PFNGETADAPTERSINFO pfnGetAdaptersInfo = NULL;
     HMODULE hIpHlpApi;
+    DWORD cMsInterval = VBOXVMINFO_INTERVAL_MS;
+    DWORD msLastOpts;
     char szCount[16];
     int rc;
 
@@ -411,6 +458,8 @@ unsigned __stdcall VBoxVMInfoThread(void *pvUser)
     if (!pfnGetAdaptersInfo)
         VBoxTrayLogRel("VMInfo: no IP Helper API (iphlpapi.dll), the network is not reported\n");
 
+    vboxVMInfoReadOpts(&cMsInterval);
+    msLastOpts = GetTickCount();
     vboxVMInfoWriteFixed();
 
     /* Adapters left by an earlier run (VBoxTray restarted without a VM reset) are deleted on the first update. */
@@ -424,9 +473,32 @@ unsigned __stdcall VBoxVMInfoThread(void *pvUser)
 
     while (!g_fVBoxTrayShutdown)
     {
+        DWORD msLastUpdate;
+
         vboxVMInfoUpdateUsers();
         vboxVMInfoUpdateNetwork(pfnGetAdaptersInfo);
-        WaitForSingleObject(g_hVMInfoEvent, VBOXVMINFO_INTERVAL_MS);
+        msLastUpdate = GetTickCount();
+
+        /* Wait for the interval, reading the options again meanwhile (a new
+           interval counts from the last update). */
+        while (!g_fVBoxTrayShutdown)
+        {
+            DWORD cMsElapsed;
+            DWORD cMsWait;
+
+            if (GetTickCount() - msLastOpts >= VBOXHOSTOPTS_INTERVAL_MS)
+            {
+                vboxVMInfoReadOpts(&cMsInterval);
+                msLastOpts = GetTickCount();
+            }
+            cMsElapsed = GetTickCount() - msLastUpdate;
+            if (cMsElapsed >= cMsInterval)
+                break;
+            cMsWait = cMsInterval - cMsElapsed;
+            if (cMsWait > VBOXHOSTOPTS_INTERVAL_MS - (GetTickCount() - msLastOpts))
+                cMsWait = VBOXHOSTOPTS_INTERVAL_MS - (GetTickCount() - msLastOpts);
+            WaitForSingleObject(g_hVMInfoEvent, cMsWait);
+        }
     }
 
     /* Delete the runtime properties, newest first so the cache shrinks from the end. */
@@ -439,6 +511,7 @@ unsigned __stdcall VBoxVMInfoThread(void *pvUser)
 
     if (hIpHlpApi)
         FreeLibrary(hIpHlpApi);
+    VBoxHostOptsFree(&g_VMInfoOptsCache);
     VbglR3HgcmDisconnect(g_hVMInfoDevice, g_idVMInfoClient);
     VbglR3Close(g_hVMInfoDevice);
     return 0;
