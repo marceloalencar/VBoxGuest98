@@ -13,7 +13,8 @@
 ;   An MS-DOS program counts the relative moves with its own mickey ratio and
 ;   screen size, and loses them at the screen edges, so when a full screen
 ;   MS-DOS VM has the mouse its INT 33h pointer is also put at the host
-;   position afterwards (function 04h, run in that VM).
+;   position afterwards (function 04h, run in that VM), in the program's own
+;   units when it counts the whole screen in other units than the driver.
 ;
 ;   VBoxTray loads it with CreateFile("\\.\VBOXMOU.VXD") and the Win32
 ;   DeviceIoControl codes below; it is unloaded when VBoxTray closes the
@@ -61,6 +62,8 @@ LastInstance            dd      0       ; Mouse_Instance of the last PS/2 packet
 DosX                    dd      0       ; host position for the MS-DOS pointer (0..0FFFFh)
 DosY                    dd      0
 fDosPending             dd      0       ; VBoxMou_Dos_Event is scheduled
+DosSizeX                dd      0       ; size the host position is scaled to
+DosSizeY                dd      0
 szLoaded                db      'VBoxMou: loaded', 10, 0
 szUnloaded              db      'VBoxMou: unloaded', 10, 0
 
@@ -107,10 +110,90 @@ EndProc VBoxMou_Post_Hook
 
 ;******************************************************************************
 ;
+;   DosInt33 - calls INT 33h in the MS-DOS VM (inside a nested execution).
+;
+;   Entry:  AX = function, CX and DX its parameters, EBP -> client registers
+;   Exit:   ECX and EDX = the client CX and DX it returned
+;   Uses:   EAX, ECX, EDX
+;
+;******************************************************************************
+BeginProc DosInt33
+        mov     [ebp].Client_AX, ax
+        mov     [ebp].Client_CX, cx
+        mov     [ebp].Client_DX, dx
+        mov     eax, 33h
+        VMMCall Exec_Int
+        movzx   ecx, [ebp].Client_CX
+        movzx   edx, [ebp].Client_DX
+        ret
+EndProc DosInt33
+
+;******************************************************************************
+;
+;   IsNear - tells whether EAX and EDX differ by 16 or less.
+;
+;   Exit:   CF set if they do
+;
+;******************************************************************************
+BeginProc IsNear
+        push    eax
+        sub     eax, edx
+        jns     short @F
+        neg     eax
+@@:
+        cmp     eax, 17
+        pop     eax
+        ret
+EndProc IsNear
+
+;******************************************************************************
+;
+;   PickSize - chooses the size one axis of the host position is scaled to.
+;   The program's own range is used when it starts at 0 and is 1/4, 1/2, 2
+;   or 4 times the virtual screen: the whole screen in other units (SimCity
+;   counts 0..319 in mode 13h, where the virtual screen is 640 wide).  Any
+;   other range is a part of the screen, and the virtual screen is kept so
+;   the mouse driver holds the pointer at its edges, under the host pointer.
+;
+;   Entry:  EAX = the range's maximum, EDX = its minimum,
+;           ECX = the virtual screen size
+;   Exit:   ECX = the size to use
+;   Uses:   EAX, ECX, EDX
+;
+;******************************************************************************
+BeginProc PickSize
+        or      edx, edx
+        jnz     short PS_Done
+        inc     eax                     ; the range's size
+        mov     edx, ecx
+        shr     edx, 1
+        call    IsNear
+        jc      short PS_Range
+        shr     edx, 1
+        call    IsNear
+        jc      short PS_Range
+        lea     edx, [ecx * 2]
+        call    IsNear
+        jc      short PS_Range
+        lea     edx, [ecx * 4]
+        call    IsNear
+        jnc     short PS_Done
+PS_Range:
+        mov     ecx, eax
+PS_Done:
+        ret
+EndProc PickSize
+
+;******************************************************************************
+;
 ;   VBoxMou_Dos_Event - puts the INT 33h pointer of the MS-DOS VM that has
 ;   the mouse at the latest host position, scaled to the virtual screen of
-;   the current video mode (function 26h, 640x200 if it isn't supported).
-;   The mouse driver keeps it inside the program's own limits.
+;   the current video mode (function 26h, 640x200 if it isn't supported) or
+;   to the program's own range (see PickSize).  The range comes from the
+;   driver's clipping: function 31h of Windows' INT 33h doesn't return it.
+;   The program doesn't run in between, its event handler isn't called by
+;   function 04h, and the cursor stays hidden, so it only sees the final
+;   position.
 ;
 ;   Entry:  EBX = VM handle, EBP -> client registers
 ;
@@ -119,35 +202,67 @@ BeginProc VBoxMou_Dos_Event
         mov     [fDosPending], 0
         Push_Client_State USES_EDI
         VMMCall Begin_Nest_V86_Exec
+        and     [ebp].Client_EFlags, NOT IF_MASK  ; no interrupts in between
 
-        mov     [ebp].Client_AX, 26h    ; get maximum virtual coordinates
-        mov     [ebp].Client_CX, 0
-        mov     [ebp].Client_DX, 0
-        mov     eax, 33h
-        VMMCall Exec_Int
-        movzx   ecx, [ebp].Client_CX
-        movzx   esi, [ebp].Client_DX
+        mov     ax, 26h                 ; get maximum virtual coordinates
+        xor     ecx, ecx
+        xor     edx, edx
+        call    DosInt33
         or      ecx, ecx
         jz      short DE_Default
-        or      esi, esi
-        jnz     short DE_Scale
+        or      edx, edx
+        jnz     short DE_Virtual
 DE_Default:
         mov     ecx, 639
-        mov     esi, 199
-DE_Scale:
-        inc     ecx                     ; x = DosX * (max x + 1) / 10000h
-        mov     eax, [DosX]
-        mul     ecx
+        mov     edx, 199
+DE_Virtual:
+        inc     ecx
+        inc     edx
+        mov     [DosSizeX], ecx
+        mov     [DosSizeY], edx
+
+        mov     ax, 2                   ; hide the cursor
+        call    DosInt33
+        mov     ax, 4                   ; the driver clips the position
+        mov     ecx, 7FFFh              ; to the program's range
+        mov     edx, ecx
+        call    DosInt33
+        mov     ax, 3
+        call    DosInt33
+        push    ecx                     ; maximum x
+        push    edx                     ; maximum y
+        mov     ax, 4
+        xor     ecx, ecx
+        xor     edx, edx
+        call    DosInt33
+        mov     ax, 3
+        call    DosInt33
+        mov     esi, edx                ; minimum y
+        mov     edx, ecx                ; minimum x
+        pop     edi                     ; maximum y
+        pop     eax                     ; maximum x
+        mov     ecx, [DosSizeX]
+        call    PickSize
+        mov     [DosSizeX], ecx
+        mov     eax, edi
+        mov     edx, esi
+        mov     ecx, [DosSizeY]
+        call    PickSize
+        mov     [DosSizeY], ecx
+
+        mov     eax, [DosX]             ; x = DosX * size x / 10000h
+        mul     [DosSizeX]
         shr     eax, 16
-        mov     [ebp].Client_CX, ax
-        inc     esi                     ; y = DosY * (max y + 1) / 10000h
-        mov     eax, [DosY]
-        mul     esi
+        push    eax
+        mov     eax, [DosY]             ; y = DosY * size y / 10000h
+        mul     [DosSizeY]
         shr     eax, 16
-        mov     [ebp].Client_DX, ax
-        mov     [ebp].Client_AX, 4      ; set cursor position
-        mov     eax, 33h
-        VMMCall Exec_Int
+        mov     edx, eax
+        pop     ecx
+        mov     ax, 4                   ; set cursor position
+        call    DosInt33
+        mov     ax, 1                   ; show the cursor
+        call    DosInt33
 
         VMMCall End_Nest_Exec
         Pop_Client_State USES_ESI

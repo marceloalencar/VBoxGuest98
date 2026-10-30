@@ -49,6 +49,11 @@ which includes the [vmdisp9x](https://github.com/JHRobotics/vmdisp9x) display
 driver (VBoxVGA, VBoxSVGA and VMSVGA adapters). Display resizing needs it, or
 another display driver with several modes. SoftGPU is not part of VBoxGuest98.
 
+## Games and the mouse
+DirectInput games that draw their own cursor from relative moves (Unreal
+Tournament, for example) may not follow the host pointer, which stops at the
+VM window's edge. Turn mouse integration off with Host+I while playing.
+
 ## Source layout
 | File | Contents |
 | --- | --- |
