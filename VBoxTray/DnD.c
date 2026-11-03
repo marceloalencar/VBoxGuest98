@@ -543,7 +543,7 @@ static char *vboxDnDGhGetData(CLIPFORMAT cfFormat, IDataObject *pDataObj)
         if (Medium.tymed == TYMED_HGLOBAL)
         {
             if (cfFormat == CF_HDROP)
-                pszData = VBoxDnDCopyHDrop((HDROP)Medium.hGlobal);
+                pszData = VBoxTrayCopyHDrop((HDROP)Medium.hGlobal);
             else
             {
                 const char *pch = (const char *)GlobalLock(Medium.hGlobal);

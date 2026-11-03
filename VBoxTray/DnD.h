@@ -55,14 +55,10 @@ int VBoxDnDGhSendData(HANDLE hDevice, UINT32 idClient, const char *pszData, BOOL
 
 
 /*********************************************************************************************************************************
-*   Text and names (DnDUtil.c)                                                                                                   *
+*   Text (DnDUtil.c)                                                                                                             *
 *********************************************************************************************************************************/
 
-int   VBoxDnDBuildPath(const char *pszDropDir, const char *pchRel, DWORD cchRel, char *pszPath);
-DWORD VBoxDnDStrNLen(const BYTE *pb, DWORD cb);
-int   VBoxDnDBuildHDrop(char *pszUriList, const char *pszDropDir, void **ppv, DWORD *pcb);
 int   VBoxDnDBuildText(const char *pch, DWORD cch, void **ppv, DWORD *pcb);
-char *VBoxDnDCopyHDrop(HDROP hDrop);
 
 
 /*********************************************************************************************************************************

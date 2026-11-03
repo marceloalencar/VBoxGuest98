@@ -10,8 +10,8 @@
  *  - Display.c    Resizing the guest display to the host window.
  *  - Seamless.c   Seamless mode (visible region of the guest windows).
  *  - DnD.c        Drag and drop between the host and the guest (DnDHgcm.c:
- *                 its HGCM calls, DnDTransfer.c: transfers, DnDUtil.c: text
- *                 conversions, DnDObj.c: OLE objects).
+ *                 its HGCM calls, DnDTransfer.c: transfers, DnDUtil.c: CF_TEXT
+ *                 data, DnDObj.c: OLE objects).
  *  - GstCtrl.c    Guest control: programs started from the host (GstCtrlFile.c:
  *                 files, directories and file systems).
  *  - VMInfo.c     Guest properties with the OS, user and network information
@@ -19,6 +19,7 @@
  *  - HostOpts.c   Service options set by the host (guest properties).
  *  - VbglR3.c     Access to the VBoxGst driver (VBoxGuest98.h interface).
  *  - Utf.c        Conversions between UTF-8 and the ANSI code page.
+ *  - Util.c       Win32 errors, strings, host file paths and CF_HDROP data.
  *
  * VBoxControl links VbglR3, GuestProp and Utf too.
  */
@@ -28,6 +29,7 @@
 
 #include <windows.h>
 #include <winioctl.h>
+#include <shellapi.h>
 
 #include "VBoxGuest98.h"
 
@@ -98,6 +100,14 @@ char *VBoxTrayAnsiToUtf8(const char *psz);
 /** Converts cch bytes of UTF-8 to zero terminated ANSI code page text (malloc'ed), NULL if out of
  *  memory; characters the code page doesn't have become chDefault. */
 char *VBoxTrayUtf8ToAnsi(const char *pch, DWORD cch, char chDefault);
+
+/* Helpers (Util.c). */
+int   VBoxTrayWin32ToRc(DWORD dwErr, int rcDefault);
+/** Length of a string in a buffer that may lack the terminator. */
+DWORD VBoxTrayStrNLen(const BYTE *pb, DWORD cb);
+int   VBoxTrayBuildPath(const char *pszDropDir, const char *pchRel, DWORD cchRel, char *pszPath);
+int   VBoxTrayBuildHDrop(char *pszUriList, const char *pszDropDir, void **ppv, DWORD *pcb);
+char *VBoxTrayCopyHDrop(HDROP hDrop);
 
 unsigned __stdcall VBoxMouseThread(void *pvUser);
 unsigned __stdcall VBoxTimeSyncThread(void *pvUser);

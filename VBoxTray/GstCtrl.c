@@ -486,22 +486,6 @@ static char *vboxGstCtrlBuildCmdLine(const char *pszExe, const char *pszArgs, BO
 }
 
 /**
- * Turns a Win32 error from CreateProcess into a VBox status code.
- */
-static int vboxGstCtrlWin32ToRc(DWORD dwErr)
-{
-    switch (dwErr)
-    {
-        case ERROR_FILE_NOT_FOUND:      return VERR_FILE_NOT_FOUND;
-        case ERROR_PATH_NOT_FOUND:      return VERR_PATH_NOT_FOUND;
-        case ERROR_ACCESS_DENIED:       return VERR_ACCESS_DENIED;
-        case ERROR_INVALID_NAME:        return VERR_INVALID_NAME;
-        case ERROR_NOT_ENOUGH_MEMORY:   return VERR_NO_MEMORY;
-        default:                        return VERR_OPEN_FAILED;
-    }
-}
-
-/**
  * Releases a program; the last reference closes its handles.
  */
 static void vboxGstCtrlProcRelease(VBOXGSTCTRLPROC *pProc)
@@ -871,7 +855,7 @@ static void vboxGstCtrlSessionExec(VBOXGSTCTRLSESSION *pSession, UINT32 idClient
                 CloseHandle(ProcInfo.hThread);
             }
             else
-                rc = vboxGstCtrlWin32ToRc(GetLastError());
+                rc = VBoxTrayWin32ToRc(GetLastError(), VERR_OPEN_FAILED);
         }
         for (i = 0; i < 3; i++)
             if (ahChild[i])

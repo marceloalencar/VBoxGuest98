@@ -90,7 +90,7 @@ VM window's edge. Turn mouse integration off with Host+I while playing.
 | `VBoxTray/DnD.c` | Drag and drop: proxy window and worker thread |
 | `VBoxTray/DnDHgcm.c` | Drag and drop HGCM protocol calls |
 | `VBoxTray/DnDTransfer.c` | Drag and drop transfers: receiving and sending files and text |
-| `VBoxTray/DnDUtil.c` | Drag and drop text conversions, paths, CF_HDROP and CF_TEXT data |
+| `VBoxTray/DnDUtil.c` | Drag and drop CF_TEXT data |
 | `VBoxTray/DnDObj.c` | Drag and drop OLE objects (data object, drop source, drop target) in C |
 | `VBoxTray/VMInfo.c` | Guest properties: OS, user and network information |
 | `VBoxTray/GuestProp.c` | Guest property HGCM calls |
@@ -101,6 +101,7 @@ VM window's edge. Turn mouse integration off with Host+I while playing.
 | `VBoxTray/AutoLogon.c` | Automatic logon with credentials from the host |
 | `VBoxTray/VbglR3.c` | Driver access helpers for user mode, HGCM call builder |
 | `VBoxTray/Utf.c` | UTF-8 and ANSI code page conversions |
+| `VBoxTray/Util.c` | Shared helpers: Win32 errors, host file paths, CF_HDROP data |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 | `installer/VBoxGuest98.nsi` | Installer and uninstaller (NSIS 2.46) |
 | `installer/mkfloppy.py` | Floppy image with the installer (FAT12, boots on to the hard disk) |

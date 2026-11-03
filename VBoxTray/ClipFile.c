@@ -37,7 +37,7 @@
  * Differences from upstream, because of Windows 98:
  *  - ANSI descriptors (FILEDESCRIPTORA); names are converted from UTF-8 to
  *    the ANSI code page, characters it doesn't have becoming '_'
- *    (VBoxDnDBuildPath).
+ *    (VBoxTrayBuildPath).
  *  - The directories are read recursively when the transfer starts.
  *  - Guest to host, the host's paths are matched with the roots without
  *    regard to case, like the FAT file system does.
@@ -50,7 +50,7 @@
  * OLE marshaling, which calls in on that thread.
  */
 
-#include "DnD.h"
+#include "VBoxTray.h"
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <stdlib.h>
@@ -408,7 +408,7 @@ static int vboxClipFileReadEntry(VBOXCLIPFILEOBJ *pObj, BOOL fRoot, UINT64 uInde
     rc = vboxClipFileCall(pObj->hDevice, &Msg);
     if (RT_SUCCESS(rc))
     {
-        cchName = VBoxDnDStrNLen(pbName, VbglR3HgcmMsgGetBufSize(&Msg, 3));
+        cchName = VBoxTrayStrNLen(pbName, VbglR3HgcmMsgGetBufSize(&Msg, 3));
         if (cchName >= VBOXCLIPFILE_MAX_NAME)
             cchName = VBOXCLIPFILE_MAX_NAME - 1;
         memcpy(pszName, pbName, cchName);
@@ -581,7 +581,7 @@ static int vboxClipFileAddEntry(VBOXCLIPFILEOBJ *pObj, const char *pszPath, UINT
         pObj->cAlloc    = cNew;
     }
     pEntry = &pObj->paEntries[pObj->cEntries];
-    rc = VBoxDnDBuildPath("", pszPath, (DWORD)strlen(pszPath), pEntry->szName);
+    rc = VBoxTrayBuildPath("", pszPath, (DWORD)strlen(pszPath), pEntry->szName);
     if (RT_FAILURE(rc))
         return rc;
     pEntry->pszPath = (char *)malloc(strlen(pszPath) + 1);
@@ -1528,24 +1528,6 @@ static IDataObjectVtbl g_vboxClipFileObjVtbl =
 *********************************************************************************************************************************/
 
 /**
- * Turns a Win32 error from a file operation into a VBox status code.
- */
-static int vboxClipFileWinRc(DWORD dwErr)
-{
-    switch (dwErr)
-    {
-        case ERROR_FILE_NOT_FOUND:      return VERR_FILE_NOT_FOUND;
-        case ERROR_PATH_NOT_FOUND:      return VERR_PATH_NOT_FOUND;
-        case ERROR_ACCESS_DENIED:       return VERR_ACCESS_DENIED;
-        case ERROR_SHARING_VIOLATION:
-        case ERROR_LOCK_VIOLATION:      return VERR_SHARING_VIOLATION;
-        case ERROR_TOO_MANY_OPEN_FILES: return VERR_TOO_MANY_OPEN_FILES;
-        case ERROR_INVALID_NAME:        return VERR_INVALID_NAME;
-        default:                        return VERR_READ_ERROR;
-    }
-}
-
-/**
  * Fetches a host request (MSG_GET).  Parameter 0 is the context; the others
  * are 32-bit values ('d'), 64-bit values ('q') or buffers ('b'), as the
  * request has them.  The first 64-bit and 32-bit values after the context
@@ -1607,7 +1589,7 @@ static int vboxClipFileFetchReq(HANDLE hDevice, UINT32 idClient, UINT32 uMsg, VB
     pReq->szPath[0] = '\0';
     if (RT_SUCCESS(rc) && pbPath)
     {
-        cch = VBoxDnDStrNLen(pbPath, VbglR3HgcmMsgGetBufSize(&Msg, iPath));
+        cch = VBoxTrayStrNLen(pbPath, VbglR3HgcmMsgGetBufSize(&Msg, iPath));
         if (cch >= VBOXCLIPFILE_MAX_PATH)
             cch = VBOXCLIPFILE_MAX_PATH - 1;
         memcpy(pReq->szPath, pbPath, cch);
@@ -2023,7 +2005,7 @@ static int vboxClipFileSendListOpen(HANDLE hDevice, UINT32 idClient, const VBOXC
     {
         dwAttr = GetFileAttributes(szAbs);
         if (dwAttr == 0xffffffff)
-            rc = vboxClipFileWinRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_READ_ERROR);
         else if (!(dwAttr & FILE_ATTRIBUTE_DIRECTORY))
             rc = VERR_NOT_SUPPORTED; /* The host only lists directories. */
         else if (strlen(szAbs) + sizeof("\\*.*") > MAX_PATH)
@@ -2045,7 +2027,7 @@ static int vboxClipFileSendListOpen(HANDLE hDevice, UINT32 idClient, const VBOXC
             dwErr = GetLastError();
             if (dwErr != ERROR_FILE_NOT_FOUND && dwErr != ERROR_NO_MORE_FILES)
             {
-                rc = vboxClipFileWinRc(dwErr);
+                rc = VBoxTrayWin32ToRc(dwErr, VERR_READ_ERROR);
                 vboxClipFileSendClose(pOpen);
                 pOpen = NULL;
             }
@@ -2123,7 +2105,7 @@ static int vboxClipFileSendRoot(HANDLE hDevice, UINT32 idClient, const VBOXCLIPF
         pszRoot += strlen(pszRoot) + 1;
     hFind = FindFirstFile(pszRoot, &Data);
     if (hFind == INVALID_HANDLE_VALUE)
-        return vboxClipFileWinRc(GetLastError());
+        return VBoxTrayWin32ToRc(GetLastError(), VERR_READ_ERROR);
     FindClose(hFind);
     return vboxClipFileWriteEntry(hDevice, idClient, pReq->idContext, TRUE, pReq->u64,
                                   pszRoot + strlen(g_ClipFileSend.szDir), &Data);
@@ -2145,7 +2127,7 @@ static int vboxClipFileSendObjOpen(HANDLE hDevice, UINT32 idClient, const VBOXCL
         hFile = CreateFile(szAbs, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
         if (hFile == INVALID_HANDLE_VALUE)
         {
-            rc = vboxClipFileWinRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_READ_ERROR);
             VBoxTrayLogRel("Clipboard: opening \"%s\" for the host failed, rc=%d\n", szAbs, rc);
         }
     }
@@ -2190,7 +2172,7 @@ static int vboxClipFileSendObjRead(HANDLE hDevice, UINT32 idClient, const VBOXCL
         g_ClipFileSend.cbSent += cbRead;
     }
     else
-        rc = vboxClipFileWinRc(GetLastError());
+        rc = VBoxTrayWin32ToRc(GetLastError(), VERR_READ_ERROR);
     free(pbBuf);
     return rc;
 }

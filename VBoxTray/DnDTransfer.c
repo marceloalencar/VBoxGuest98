@@ -134,7 +134,7 @@ static int vboxDnDRecvUriData(HANDLE hDevice, UINT32 idClient, const char *pszDr
                 if (cb > MAX_PATH * 4)
                     rc = VERR_TOO_MUCH_DATA;
                 else
-                    rc = VBoxDnDBuildPath(pszDropDir, (const char *)pb, VBoxDnDStrNLen(pb, cb), szPath);
+                    rc = VBoxTrayBuildPath(pszDropDir, (const char *)pb, VBoxTrayStrNLen(pb, cb), szPath);
                 if (RT_SUCCESS(rc) && !CreateDirectory(szPath, NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
                     rc = VERR_OPEN_FAILED;
                 if (RT_SUCCESS(rc) && cObjects)
@@ -169,7 +169,7 @@ static int vboxDnDRecvUriData(HANDLE hDevice, UINT32 idClient, const char *pszDr
                 if (cb > MAX_PATH * 4 || cbFileSize > cbToRecv)
                     rc = VERR_TOO_MUCH_DATA;
                 else
-                    rc = VBoxDnDBuildPath(pszDropDir, (const char *)pb, VBoxDnDStrNLen(pb, cb), szPath);
+                    rc = VBoxTrayBuildPath(pszDropDir, (const char *)pb, VBoxTrayStrNLen(pb, cb), szPath);
                 if (RT_SUCCESS(rc))
                 {
                     hFile = CreateFile(szPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -351,7 +351,7 @@ int VBoxDnDRecvData(HANDLE hDevice, UINT32 idClient, void **ppvData, DWORD *pcbD
             if (RT_SUCCESS(rc))
                 rc = vboxDnDRecvUriData(hDevice, idClient, szDropDir, cbTotal - cbMeta, cObjects, &cFiles);
             if (RT_SUCCESS(rc))
-                rc = VBoxDnDBuildHDrop((char *)pbMeta, szDropDir, &pvData, &cbData);
+                rc = VBoxTrayBuildHDrop((char *)pbMeta, szDropDir, &pvData, &cbData);
             if (RT_SUCCESS(rc))
                 VBoxTrayLogRel("DnD: received %lu file(s), %lu objects, %lu KB in \"%s\"\n", cFiles,
                                (unsigned long)cObjects, (unsigned long)((cbTotal - cbMeta) / 1024), szDropDir);

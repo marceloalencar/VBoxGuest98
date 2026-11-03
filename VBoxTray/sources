@@ -30,6 +30,7 @@ SOURCES= \
         AutoMount.c \
         AutoLogon.c \
         Utf.c \
+        Util.c \
         VbglR3.c \
         VBoxTray.rc
 

@@ -31,7 +31,7 @@
  * the applications that use that.
  */
 
-#include "DnD.h"
+#include "VBoxTray.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -873,7 +873,7 @@ static void vboxClipGetGuestFiles(HWND hwnd, char **ppszFiles)
         return;
     hMem = GetClipboardData(CF_HDROP);
     if (hMem)
-        *ppszFiles = VBoxDnDCopyHDrop((HDROP)hMem);
+        *ppszFiles = VBoxTrayCopyHDrop((HDROP)hMem);
     CloseClipboard();
 }
 

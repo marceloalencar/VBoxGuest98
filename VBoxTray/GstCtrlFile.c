@@ -78,38 +78,6 @@ typedef struct VBOXGSTCTRLDIR
 *********************************************************************************************************************************/
 
 /**
- * Turns a Win32 error from a file operation into a VBox status code.
- */
-static int vboxGstCtrlFileRc(DWORD dwErr)
-{
-    switch (dwErr)
-    {
-        case ERROR_FILE_NOT_FOUND:      return VERR_FILE_NOT_FOUND;
-        case ERROR_PATH_NOT_FOUND:
-        case ERROR_INVALID_DRIVE:
-        case ERROR_BAD_NETPATH:         return VERR_PATH_NOT_FOUND;
-        case ERROR_ACCESS_DENIED:       return VERR_ACCESS_DENIED;
-        case ERROR_FILE_EXISTS:
-        case ERROR_ALREADY_EXISTS:      return VERR_ALREADY_EXISTS;
-        case ERROR_DIR_NOT_EMPTY:       return VERR_DIR_NOT_EMPTY;
-        case ERROR_SHARING_VIOLATION:
-        case ERROR_LOCK_VIOLATION:      return VERR_SHARING_VIOLATION;
-        case ERROR_DISK_FULL:
-        case ERROR_HANDLE_DISK_FULL:    return VERR_DISK_FULL;
-        case ERROR_WRITE_PROTECT:       return VERR_WRITE_PROTECT;
-        case ERROR_TOO_MANY_OPEN_FILES: return VERR_TOO_MANY_OPEN_FILES;
-        case ERROR_INVALID_NAME:
-        case ERROR_BAD_PATHNAME:
-        case ERROR_FILENAME_EXCED_RANGE: return VERR_INVALID_NAME;
-        case ERROR_NO_MORE_FILES:       return VERR_NO_MORE_FILES;
-        case ERROR_NEGATIVE_SEEK:       return VERR_NEGATIVE_SEEK;
-        case ERROR_NOT_ENOUGH_MEMORY:
-        case ERROR_OUTOFMEMORY:         return VERR_NO_MEMORY;
-        default:                        return VERR_FILE_IO_ERROR;
-    }
-}
-
-/**
  * Fetches a host message.  Parameter 0 is the context; the others are
  * 32-bit values ('u'), 64-bit values ('q') or buffers ('b', for paths and
  * data).  The buffers grow while the host says they are too small.
@@ -296,7 +264,7 @@ static int vboxGstCtrlFileStat(const char *pszPath, UINT32 enmAttrAdd, GSTCTLFSO
     /* The root of a drive has no times. */
     dwAttr = GetFileAttributesA(pszPath);
     if (dwAttr == 0xffffffff)
-        return vboxGstCtrlFileRc(GetLastError());
+        return VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
     vboxGstCtrlFileFillInfo(pInfo, dwAttr, NULL, NULL, NULL, 0, 0, enmAttrAdd);
     return VINF_SUCCESS;
 }
@@ -348,7 +316,7 @@ static int vboxGstCtrlFileSeekTo(HANDLE hFile, INT64 off, DWORD dwMethod)
     LONG offHigh = (LONG)(off >> 32);
     DWORD offLow = SetFilePointer(hFile, (LONG)(DWORD)off, &offHigh, dwMethod);
     if (offLow == 0xffffffff && GetLastError() != NO_ERROR)
-        return vboxGstCtrlFileRc(GetLastError());
+        return VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
     return VINF_SUCCESS;
 }
 
@@ -448,7 +416,7 @@ static void vboxGstCtrlFileOpen(VBOXGSTCTRLSESSION *pSession, UINT32 idClient, U
     {
         hFile = CreateFileA(pszName, fAccess, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, dwDisp, FILE_ATTRIBUTE_NORMAL, NULL);
         if (hFile == INVALID_HANDLE_VALUE)
-            rc = vboxGstCtrlFileRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
         else
         {
             if (offOpen)
@@ -512,7 +480,7 @@ static void vboxGstCtrlFileClose(VBOXGSTCTRLSESSION *pSession, UINT32 idClient, 
         }
     if (pFile)
     {
-        rc = CloseHandle(pFile->hFile) ? VINF_SUCCESS : vboxGstCtrlFileRc(GetLastError());
+        rc = CloseHandle(pFile->hFile) ? VINF_SUCCESS : VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
         free(pFile);
     }
 
@@ -565,7 +533,7 @@ static void vboxGstCtrlFileRead(VBOXGSTCTRLSESSION *pSession, UINT32 idClient, U
         rc = fAt ? vboxGstCtrlFileSeekTo(pFile->hFile, (INT64)offAt, FILE_BEGIN) : VINF_SUCCESS;
         if (RT_SUCCESS(rc) && !ReadFile(pFile->hFile, pbData, cbToRead, &cbRead, NULL))
         {
-            rc = vboxGstCtrlFileRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
             cbRead = 0;
         }
         offNew = vboxGstCtrlFileTell(pFile->hFile);
@@ -620,7 +588,7 @@ static void vboxGstCtrlFileWrite(VBOXGSTCTRLSESSION *pSession, UINT32 idClient, 
         else
             rc = VINF_SUCCESS;
         if (RT_SUCCESS(rc) && cbData && !WriteFile(pFile->hFile, apb[iData], cbData, &cbWritten, NULL))
-            rc = vboxGstCtrlFileRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
         offNew = vboxGstCtrlFileTell(pFile->hFile);
     }
     VbglR3HgcmMsgFree(&Msg);
@@ -691,7 +659,7 @@ static void vboxGstCtrlFilePosition(VBOXGSTCTRLSESSION *pSession, UINT32 idClien
             uType = GUEST_FILE_NOTIFYTYPE_SET_SIZE;
             rc = vboxGstCtrlFileSeekTo(pFile->hFile, (INT64)u64, FILE_BEGIN);
             if (RT_SUCCESS(rc) && !SetEndOfFile(pFile->hFile))
-                rc = vboxGstCtrlFileRc(GetLastError());
+                rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
             vboxGstCtrlFileSeekTo(pFile->hFile, (INT64)offOld, FILE_BEGIN);
             u64Answer = u64;
         }
@@ -725,7 +693,7 @@ static void vboxGstCtrlFileRemove(VBOXGSTCTRLSESSION *pSession, UINT32 idClient,
     VbglR3HgcmMsgFree(&Msg);
 
     if (pszName)
-        rc = DeleteFileA(pszName) ? VINF_SUCCESS : vboxGstCtrlFileRc(GetLastError());
+        rc = DeleteFileA(pszName) ? VINF_SUCCESS : VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
     vboxGstCtrlFileReply(pSession, idClient, idContext, rc, NULL);
     free(pszName);
 }
@@ -829,7 +797,7 @@ static void vboxGstCtrlDirOpen(VBOXGSTCTRLSESSION *pSession, UINT32 idClient, UI
     {
         dwAttr = GetFileAttributesA(pszPath);
         if (dwAttr == 0xffffffff)
-            rc = vboxGstCtrlFileRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
         else if (!(dwAttr & FILE_ATTRIBUTE_DIRECTORY))
             rc = VERR_NOT_A_DIRECTORY;
         else
@@ -1030,7 +998,7 @@ static int vboxGstCtrlDirCreatePath(char *pszPath, BOOL fParents)
         return fParents ? VINF_SUCCESS : VERR_ALREADY_EXISTS;
     }
     if (!fParents || dwErr != ERROR_PATH_NOT_FOUND)
-        return vboxGstCtrlFileRc(dwErr);
+        return VBoxTrayWin32ToRc(dwErr, VERR_FILE_IO_ERROR);
 
     /* Create the parent first. */
     pch = strrchr(pszPath, '\\');
@@ -1041,7 +1009,7 @@ static int vboxGstCtrlDirCreatePath(char *pszPath, BOOL fParents)
     *pch = '\\';
     if (RT_FAILURE((int)dwErr))
         return (int)dwErr;
-    return CreateDirectoryA(pszPath, NULL) ? VINF_SUCCESS : vboxGstCtrlFileRc(GetLastError());
+    return CreateDirectoryA(pszPath, NULL) ? VINF_SUCCESS : VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
 }
 
 /**
@@ -1103,12 +1071,12 @@ static int vboxGstCtrlDirRemoveTree(const char *pszPath, BOOL fDirToo)
             if (Data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
                 rc = vboxGstCtrlDirRemoveTree(szPath, TRUE);
             else if (!DeleteFileA(szPath))
-                rc = vboxGstCtrlFileRc(GetLastError());
+                rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
         } while (RT_SUCCESS(rc) && FindNextFileA(hFind, &Data));
         FindClose(hFind);
     }
     if (RT_SUCCESS(rc) && fDirToo && !RemoveDirectoryA(pszPath))
-        rc = vboxGstCtrlFileRc(GetLastError());
+        rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
     return rc;
 }
 
@@ -1137,7 +1105,7 @@ static void vboxGstCtrlDirRemove(VBOXGSTCTRLSESSION *pSession, UINT32 idClient, 
     {
         dwAttr = GetFileAttributesA(pszPath);
         if (dwAttr == 0xffffffff)
-            rc = vboxGstCtrlFileRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
         else if (!(dwAttr & FILE_ATTRIBUTE_DIRECTORY))
             rc = VERR_NOT_A_DIRECTORY;
         else if (fFlags & DIRREMOVEREC_FLAG_RECURSIVE)
@@ -1150,7 +1118,7 @@ static void vboxGstCtrlDirRemove(VBOXGSTCTRLSESSION *pSession, UINT32 idClient, 
             WIN32_FIND_DATAA Data;
             char szPattern[MAX_PATH + 4];
             HANDLE hFind;
-            rc = vboxGstCtrlFileRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
             if (rc == VERR_ACCESS_DENIED && strlen(pszPath) + 4 < sizeof(szPattern))
             {
                 wsprintf(szPattern, "%s\\*.*", pszPath);
@@ -1212,12 +1180,12 @@ static void vboxGstCtrlPathRename(VBOXGSTCTRLSESSION *pSession, UINT32 idClient,
             else if (dwAttr & FILE_ATTRIBUTE_DIRECTORY)
                 rc = VERR_IS_A_DIRECTORY;
             else
-                rc = DeleteFileA(pszDst) ? VINF_SUCCESS : vboxGstCtrlFileRc(GetLastError());
+                rc = DeleteFileA(pszDst) ? VINF_SUCCESS : VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
         }
         else
             rc = VINF_SUCCESS;
         if (RT_SUCCESS(rc) && !MoveFileA(pszSrc, pszDst))
-            rc = vboxGstCtrlFileRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
     }
     vboxGstCtrlFileReply(pSession, idClient, idContext, rc, NULL);
     free(pszSrc);
@@ -1366,7 +1334,8 @@ static void vboxGstCtrlFsCreateTemp(VBOXGSTCTRLSESSION *pSession, UINT32 idClien
                 szPath[off + i] = s_szChars[rand() % (sizeof(s_szChars) - 1)];
             if (fFlags & GSTCTL_CREATETEMP_F_DIRECTORY)
                 rc = CreateDirectoryA(szPath, NULL) ? VINF_SUCCESS
-                   : GetFileAttributesA(szPath) != 0xffffffff ? VERR_ALREADY_EXISTS : vboxGstCtrlFileRc(GetLastError());
+                   : GetFileAttributesA(szPath) != 0xffffffff ? VERR_ALREADY_EXISTS
+                   : VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
             else
             {
                 hFile = CreateFileA(szPath, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -1376,7 +1345,8 @@ static void vboxGstCtrlFsCreateTemp(VBOXGSTCTRLSESSION *pSession, UINT32 idClien
                     rc = VINF_SUCCESS;
                 }
                 else
-                    rc = GetFileAttributesA(szPath) != 0xffffffff ? VERR_ALREADY_EXISTS : vboxGstCtrlFileRc(GetLastError());
+                    rc = GetFileAttributesA(szPath) != 0xffffffff ? VERR_ALREADY_EXISTS
+                       : VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
             }
         }
         if (RT_SUCCESS(rc))
@@ -1453,7 +1423,7 @@ static void vboxGstCtrlFsQueryInfo(VBOXGSTCTRLSESSION *pSession, UINT32 idClient
     {
         if (!GetVolumeInformationA(szRoot, szLabel, sizeof(szLabel), &dwSerial, &cchMaxComponent, &fFsFlags,
                                    szFsName, sizeof(szFsName)))
-            rc = vboxGstCtrlFileRc(GetLastError());
+            rc = VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
         else
         {
             if (GetDiskFreeSpaceA(szRoot, &cSectorsPerCluster, &cbSector, &cFreeClusters, &cClusters))
@@ -1525,7 +1495,7 @@ static void vboxGstCtrlMountPoints(VBOXGSTCTRLSESSION *pSession, UINT32 idClient
     cch = GetLogicalDriveStringsA(sizeof(szDrives) - 1, szDrives);
     if (!cch || cch >= sizeof(szDrives))
     {
-        rc = cch ? VERR_BUFFER_OVERFLOW : vboxGstCtrlFileRc(GetLastError());
+        rc = cch ? VERR_BUFFER_OVERFLOW : VBoxTrayWin32ToRc(GetLastError(), VERR_FILE_IO_ERROR);
         cch = 0;
     }
 
