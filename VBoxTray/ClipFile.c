@@ -41,6 +41,10 @@
  *  - The directories are read recursively when the transfer starts.
  *  - Guest to host, the host's paths are matched with the roots without
  *    regard to case, like the FAT file system does.
+ *  - The Windows 98 shell (4.72) ignores FD_PROGRESSUI and shows no progress
+ *    while it copies virtual files, so with a shell older than 5.0 VBoxTray
+ *    shows the standard progress window (CLSID_ProgressDialog, Internet
+ *    Explorer 5 and later) itself while the files are read.
  *
  * The objects live on the window thread; other processes call them through
  * OLE marshaling, which calls in on that thread.
@@ -48,6 +52,7 @@
 
 #include "DnD.h"
 #include <shlobj.h>
+#include <shlwapi.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -91,6 +96,20 @@
 #define VBOXCLIPFILE_MAX_OPEN       16
 /** 100 ns intervals from 1601 (FILETIME) to 1970 (RTTIMESPEC). */
 #define VBOXCLIPFILE_FILETIME_1970  (11644473600i64 * 10000000)
+/** Asks the shell for a progress window (shell 5.0 and later; newer than
+ *  the Visual C++ 6.0 headers). */
+#ifndef FD_PROGRESSUI
+# define FD_PROGRESSUI              0x4000
+#endif
+/** The progress window closes when nothing was read for this long (ms), so
+ *  a paste that stops early doesn't leave it open. */
+#define VBOXCLIPFILE_PROGRESS_IDLE_MS 3000
+/** The timer checking that, on the window thread (ms). */
+#define VBOXCLIPFILE_PROGRESS_TIMER_MS 1000
+/** PROGDLG_XXX: estimate the time left. */
+#define VBOXCLIPFILE_PROGDLG_AUTOTIME 0x00000002
+/** The shell's file copy animation (AVI resource of SHELL32.DLL). */
+#define VBOXCLIPFILE_AVI_FILECOPY   161
 /** Attempts and pause between them when another application has the
  *  clipboard open. */
 #define VBOXCLIPFILE_SET_TRIES      10
@@ -193,6 +212,50 @@ typedef struct VBOXCLIPFILEENUMFMT
     ULONG                iCur;
 } VBOXCLIPFILEENUMFMT;
 
+/** IProgressDialog (shlobj.h of later SDKs; not in the Visual C++ 6.0 one). */
+typedef struct VBOXPROGRESSDIALOG VBOXPROGRESSDIALOG;
+typedef struct VBOXPROGRESSDIALOGVTBL
+{
+    HRESULT (STDMETHODCALLTYPE *QueryInterface)(VBOXPROGRESSDIALOG *pThis, REFIID riid, void **ppv);
+    ULONG   (STDMETHODCALLTYPE *AddRef)(VBOXPROGRESSDIALOG *pThis);
+    ULONG   (STDMETHODCALLTYPE *Release)(VBOXPROGRESSDIALOG *pThis);
+    HRESULT (STDMETHODCALLTYPE *StartProgressDialog)(VBOXPROGRESSDIALOG *pThis, HWND hwndParent, IUnknown *punkEnableModless,
+                                                     DWORD dwFlags, LPCVOID pvReserved);
+    HRESULT (STDMETHODCALLTYPE *StopProgressDialog)(VBOXPROGRESSDIALOG *pThis);
+    HRESULT (STDMETHODCALLTYPE *SetTitle)(VBOXPROGRESSDIALOG *pThis, LPCWSTR pwzTitle);
+    HRESULT (STDMETHODCALLTYPE *SetAnimation)(VBOXPROGRESSDIALOG *pThis, HINSTANCE hInstAnimation, UINT idAnimation);
+    BOOL    (STDMETHODCALLTYPE *HasUserCancelled)(VBOXPROGRESSDIALOG *pThis);
+    HRESULT (STDMETHODCALLTYPE *SetProgress)(VBOXPROGRESSDIALOG *pThis, DWORD dwCompleted, DWORD dwTotal);
+    HRESULT (STDMETHODCALLTYPE *SetProgress64)(VBOXPROGRESSDIALOG *pThis, ULONGLONG ullCompleted, ULONGLONG ullTotal);
+    HRESULT (STDMETHODCALLTYPE *SetLine)(VBOXPROGRESSDIALOG *pThis, DWORD dwLineNum, LPCWSTR pwzString, BOOL fCompactPath,
+                                         LPCVOID pvReserved);
+    HRESULT (STDMETHODCALLTYPE *SetCancelMsg)(VBOXPROGRESSDIALOG *pThis, LPCWSTR pwzCancelMsg, LPCVOID pvReserved);
+    HRESULT (STDMETHODCALLTYPE *Timer)(VBOXPROGRESSDIALOG *pThis, DWORD dwTimerAction, LPCVOID pvReserved);
+} VBOXPROGRESSDIALOGVTBL;
+struct VBOXPROGRESSDIALOG
+{
+    const VBOXPROGRESSDIALOGVTBL *lpVtbl;
+};
+
+/** Our progress window for shells without one (window thread only). */
+typedef struct VBOXCLIPFILEPROGRESS
+{
+    /** Whether the shell version was checked, and the outcome: the shell
+     *  shows no progress for virtual files. */
+    BOOL                 fChecked;
+    BOOL                 fNeeded;
+    /** The window while it is open. */
+    VBOXPROGRESSDIALOG  *pDlg;
+    /** The user canceled: reads fail until the paste is over (idle). */
+    BOOL                 fCanceled;
+    /** Bytes of all the files and read so far in this paste. */
+    UINT64               cbTotal;
+    UINT64               cbDone;
+    /** GetTickCount of the last read. */
+    DWORD                msLast;
+    UINT                 idTimer;
+} VBOXCLIPFILEPROGRESS;
+
 /** A host request of a transfer of guest files (VBoxClipFileOnHostMsg). */
 typedef struct VBOXCLIPFILEREQ
 {
@@ -257,6 +320,12 @@ static IDataObject *g_pClipFileObj;
 static BOOL g_fClipFileSetting;
 /** The transfer of guest files to the host. */
 static VBOXCLIPFILESEND g_ClipFileSend;
+/** The progress window for host files pasted in the guest. */
+static VBOXCLIPFILEPROGRESS g_ClipFileProgress;
+static const CLSID g_vboxClsidProgressDialog =
+    { 0xf8383852, 0xfcd3, 0x11d1, { 0xa6, 0xb9, 0x00, 0x60, 0x97, 0xdf, 0x5b, 0xd4 } };
+static const IID g_vboxIidProgressDialog =
+    { 0xebbc7c04, 0x315e, 0x11d2, { 0xb6, 0x2f, 0x00, 0x60, 0x97, 0xdf, 0x5b, 0xd4 } };
 
 
 /*********************************************************************************************************************************
@@ -681,6 +750,142 @@ static HRESULT vboxClipFileObjPrepare(VBOXCLIPFILEOBJ *pThis)
 
 
 /*********************************************************************************************************************************
+*   Progress window                                                                                                              *
+*********************************************************************************************************************************/
+
+/**
+ * Whether the shell shows no progress of its own (older than 5.0, which
+ * introduced FD_PROGRESSUI).  Checked once.
+ */
+static BOOL vboxClipFileProgressNeeded(void)
+{
+    if (!g_ClipFileProgress.fChecked)
+    {
+        DLLGETVERSIONPROC pfnDllGetVersion;
+        DLLVERSIONINFO Info;
+        HMODULE hShell = GetModuleHandle("SHELL32.DLL");
+
+        memset(&Info, 0, sizeof(Info));
+        Info.cbSize = sizeof(Info);
+        pfnDllGetVersion = hShell ? (DLLGETVERSIONPROC)GetProcAddress(hShell, "DllGetVersion") : NULL;
+        if (!pfnDllGetVersion || FAILED(pfnDllGetVersion(&Info)))
+            Info.dwMajorVersion = 4;
+        g_ClipFileProgress.fChecked = TRUE;
+        g_ClipFileProgress.fNeeded  = Info.dwMajorVersion < 5;
+        VBoxTrayLogRel("Clipboard: shell %lu.%lu, %s progress window for pasted host files\n", Info.dwMajorVersion,
+                       Info.dwMinorVersion, g_ClipFileProgress.fNeeded ? "our" : "the shell's");
+    }
+    return g_ClipFileProgress.fNeeded;
+}
+
+/**
+ * Closes the progress window.
+ */
+static void vboxClipFileProgressClose(void)
+{
+    VBOXPROGRESSDIALOG *pDlg = g_ClipFileProgress.pDlg;
+
+    g_ClipFileProgress.pDlg = NULL;
+    if (pDlg)
+    {
+        pDlg->lpVtbl->StopProgressDialog(pDlg);
+        pDlg->lpVtbl->Release(pDlg);
+    }
+}
+
+/**
+ * Ends the paste when nothing was read for a while (timer on the window
+ * thread).
+ */
+static VOID CALLBACK vboxClipFileProgressTimer(HWND hwnd, UINT uMsg, UINT idEvent, DWORD msTime)
+{
+    if (GetTickCount() - g_ClipFileProgress.msLast < VBOXCLIPFILE_PROGRESS_IDLE_MS)
+        return;
+    vboxClipFileProgressClose();
+    KillTimer(NULL, g_ClipFileProgress.idTimer);
+    g_ClipFileProgress.idTimer   = 0;
+    g_ClipFileProgress.fCanceled = FALSE;
+}
+
+/**
+ * An application opens a host file (FileContents): opens the progress
+ * window for the whole paste if the shell has none, and shows the file.
+ */
+static void vboxClipFileProgressFile(VBOXCLIPFILEOBJ *pObj, UINT32 iEntry)
+{
+    WCHAR wszName[MAX_PATH];
+    UINT32 i;
+
+    if (!vboxClipFileProgressNeeded())
+        return;
+    g_ClipFileProgress.msLast = GetTickCount();
+    if (!g_ClipFileProgress.idTimer)
+        g_ClipFileProgress.idTimer = SetTimer(NULL, 0, VBOXCLIPFILE_PROGRESS_TIMER_MS, vboxClipFileProgressTimer);
+    if (g_ClipFileProgress.fCanceled)
+        return;
+    if (!g_ClipFileProgress.pDlg)
+    {
+        VBOXPROGRESSDIALOG *pDlg = NULL;
+        HRESULT hr = CoCreateInstance(&g_vboxClsidProgressDialog, NULL, CLSCTX_INPROC_SERVER, &g_vboxIidProgressDialog,
+                                      (void **)&pDlg);
+        if (FAILED(hr))
+        {
+            VBoxTrayLogRel("Clipboard: no progress window, hr=%#lx\n", hr);
+            g_ClipFileProgress.fNeeded = FALSE;
+            return;
+        }
+        pDlg->lpVtbl->SetTitle(pDlg, L"Pasting files from the host");
+        pDlg->lpVtbl->SetAnimation(pDlg, GetModuleHandle("SHELL32.DLL"), VBOXCLIPFILE_AVI_FILECOPY);
+        hr = pDlg->lpVtbl->StartProgressDialog(pDlg, NULL, NULL, VBOXCLIPFILE_PROGDLG_AUTOTIME, NULL);
+        if (FAILED(hr))
+        {
+            VBoxTrayLogRel("Clipboard: the progress window didn't open, hr=%#lx\n", hr);
+            pDlg->lpVtbl->Release(pDlg);
+            g_ClipFileProgress.fNeeded = FALSE;
+            return;
+        }
+        g_ClipFileProgress.pDlg    = pDlg;
+        g_ClipFileProgress.cbDone  = 0;
+        g_ClipFileProgress.cbTotal = 0;
+        for (i = 0; i < pObj->cEntries; i++)
+            g_ClipFileProgress.cbTotal += pObj->paEntries[i].cbObject;
+        pDlg->lpVtbl->SetProgress64(pDlg, 0, g_ClipFileProgress.cbTotal);
+    }
+    if (!MultiByteToWideChar(CP_ACP, 0, pObj->paEntries[iEntry].szName, -1, wszName, MAX_PATH))
+        wszName[0] = 0;
+    g_ClipFileProgress.pDlg->lpVtbl->SetLine(g_ClipFileProgress.pDlg, 1, wszName, TRUE, NULL);
+}
+
+/**
+ * Bytes of a host file were read.
+ *
+ * @returns FALSE if the user canceled the paste.
+ */
+static BOOL vboxClipFileProgressRead(ULONG cb)
+{
+    VBOXPROGRESSDIALOG *pDlg = g_ClipFileProgress.pDlg;
+
+    if (g_ClipFileProgress.fCanceled)
+        return FALSE;
+    if (!pDlg)
+        return TRUE;
+    g_ClipFileProgress.msLast  = GetTickCount();
+    g_ClipFileProgress.cbDone += cb;
+    if (pDlg->lpVtbl->HasUserCancelled(pDlg))
+    {
+        VBoxTrayLogRel("Clipboard: the user canceled the paste\n");
+        g_ClipFileProgress.fCanceled = TRUE;
+        vboxClipFileProgressClose();
+        return FALSE;
+    }
+    pDlg->lpVtbl->SetProgress64(pDlg, g_ClipFileProgress.cbDone, g_ClipFileProgress.cbTotal);
+    if (g_ClipFileProgress.cbDone >= g_ClipFileProgress.cbTotal)
+        vboxClipFileProgressClose();
+    return TRUE;
+}
+
+
+/*********************************************************************************************************************************
 *   IStream                                                                                                                      *
 *********************************************************************************************************************************/
 
@@ -727,9 +932,9 @@ static int vboxClipFileStreamReadIt(VBOXCLIPFILESTREAM *pThis, void *pv, ULONG c
     VBOXCLIPFILEOBJ *pObj = pThis->pObj;
     UINT64 cbObject = pObj->paEntries[pThis->iEntry].cbObject;
     ULONG cbDone = 0;
-    int rc = VINF_SUCCESS;
+    int rc = g_ClipFileProgress.fCanceled ? VERR_CANCELLED : VINF_SUCCESS;
 
-    while (cbDone < cb && pThis->off < cbObject)
+    while (RT_SUCCESS(rc) && cbDone < cb && pThis->off < cbObject)
     {
         DWORD cbChunk = cb - cbDone;
         DWORD cbRead = 0;
@@ -744,16 +949,26 @@ static int vboxClipFileStreamReadIt(VBOXCLIPFILESTREAM *pThis, void *pv, ULONG c
             break; /* Shorter than listed. */
         cbDone     += cbRead;
         pThis->off += cbRead;
+        if (!vboxClipFileProgressRead(cbRead))
+            rc = VERR_CANCELLED;
     }
     pObj->cbRead += cbDone;
     *pcbRead = cbDone;
-    if (RT_FAILURE(rc))
+    if (RT_FAILURE(rc) && rc != VERR_CANCELLED)
     {
         VBoxTrayLogRel("Clipboard: reading the host file \"%s\" failed, rc=%d\n", pObj->paEntries[pThis->iEntry].szName, rc);
         if (RT_SUCCESS(pObj->rcRead))
             pObj->rcRead = rc;
     }
     return rc;
+}
+
+/**
+ * The HRESULT of a failed read: a canceled paste is no error to show.
+ */
+static HRESULT vboxClipFileStreamReadHr(int rc)
+{
+    return rc == VERR_CANCELLED ? HRESULT_FROM_WIN32(ERROR_CANCELLED) : STG_E_READFAULT;
 }
 
 static HRESULT STDMETHODCALLTYPE vboxClipFileStreamRead(IStream *pIface, void *pv, ULONG cb, ULONG *pcbRead)
@@ -766,7 +981,7 @@ static HRESULT STDMETHODCALLTYPE vboxClipFileStreamRead(IStream *pIface, void *p
     rc = vboxClipFileStreamReadIt((VBOXCLIPFILESTREAM *)pIface, pv, cb, &cbRead);
     if (pcbRead)
         *pcbRead = cbRead;
-    return RT_SUCCESS(rc) ? S_OK : STG_E_READFAULT;
+    return RT_SUCCESS(rc) ? S_OK : vboxClipFileStreamReadHr(rc);
 }
 
 static HRESULT STDMETHODCALLTYPE vboxClipFileStreamWrite(IStream *pIface, const void *pv, ULONG cb, ULONG *pcbWritten)
@@ -819,9 +1034,10 @@ static HRESULT STDMETHODCALLTYPE vboxClipFileStreamCopyTo(IStream *pIface, IStre
         ULONG cbChunk = cbLeft > VBOXCLIPFILE_CHUNK_SIZE ? VBOXCLIPFILE_CHUNK_SIZE : (ULONG)cbLeft;
         ULONG cbRead = 0;
         ULONG cbWritten = 0;
-        if (RT_FAILURE(vboxClipFileStreamReadIt(pThis, pbBuf, cbChunk, &cbRead)))
+        int rc = vboxClipFileStreamReadIt(pThis, pbBuf, cbChunk, &cbRead);
+        if (RT_FAILURE(rc))
         {
-            hr = STG_E_READFAULT;
+            hr = vboxClipFileStreamReadHr(rc);
             break;
         }
         if (!cbRead)
@@ -915,6 +1131,9 @@ static HRESULT vboxClipFileStreamCreate(VBOXCLIPFILEOBJ *pObj, UINT32 iEntry, VB
     VBOXCLIPFILESTREAM *pThis;
     int rc;
 
+    vboxClipFileProgressFile(pObj, iEntry);
+    if (g_ClipFileProgress.fCanceled)
+        return HRESULT_FROM_WIN32(ERROR_CANCELLED);
     pThis = (VBOXCLIPFILESTREAM *)calloc(1, sizeof(*pThis));
     if (!pThis)
         return E_OUTOFMEMORY;
@@ -1121,7 +1340,7 @@ static HGLOBAL vboxClipFileObjMakeDescriptor(VBOXCLIPFILEOBJ *pThis)
     {
         const VBOXCLIPFILEENTRY *pEntry = &pThis->paEntries[i];
         FILEDESCRIPTORA *pDesc = &pGroup->fgd[i];
-        pDesc->dwFlags          = FD_ATTRIBUTES | FD_FILESIZE;
+        pDesc->dwFlags          = FD_PROGRESSUI | FD_ATTRIBUTES | FD_FILESIZE;
         pDesc->dwFileAttributes = pEntry->fDir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_ARCHIVE;
         pDesc->nFileSizeLow     = (DWORD)pEntry->cbObject;
         pDesc->nFileSizeHigh    = (DWORD)(pEntry->cbObject >> 32);
@@ -1164,7 +1383,7 @@ static HRESULT vboxClipFileObjReadWhole(VBOXCLIPFILEOBJ *pThis, UINT32 iEntry, H
         if (pv)
             GlobalUnlock(hMem);
         if (RT_FAILURE(rc))
-            hr = STG_E_READFAULT;
+            hr = vboxClipFileStreamReadHr(rc);
         pStream->Iface.lpVtbl->Release(&pStream->Iface);
     }
     if (FAILED(hr))
@@ -2323,4 +2542,10 @@ void VBoxClipFileTerm(void)
     if (VBoxClipFileIsCurrent())
         OleSetClipboard(NULL);
     VBoxClipFileForget();
+    vboxClipFileProgressClose();
+    if (g_ClipFileProgress.idTimer)
+    {
+        KillTimer(NULL, g_ClipFileProgress.idTimer);
+        g_ClipFileProgress.idTimer = 0;
+    }
 }
