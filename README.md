@@ -13,7 +13,7 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 **VBoxTray**: Tray application started at boot, before logon (RunServices):
 - Mouse pointer integration
 - Time synchronization
-- Shared clipboard (text, images, HTML, files and folders
+- Shared clipboard (text, images, HTML, files and folders)
 - Guest statistics
 - Display resizing ("Auto-resize Guest Display")
 - Seamless mode

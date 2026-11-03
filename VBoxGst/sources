@@ -7,6 +7,8 @@ C_DEFINES=-DDRIVER
 
 INCLUDES=..\inc
 
+MSC_WARNING_LEVEL=/W3 /WX
+
 SOURCES= \
         Driver.c \
         PnP.c \
