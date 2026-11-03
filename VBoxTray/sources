@@ -14,6 +14,8 @@ SOURCES= \
         TimeSync.c \
         Clipboard.c \
         ClipFile.c \
+        ClipFileObj.c \
+        ClipFileSend.c \
         Stats.c \
         Display.c \
         Seamless.c \

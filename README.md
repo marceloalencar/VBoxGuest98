@@ -83,7 +83,9 @@ VM window's edge. Turn mouse integration off with Host+I while playing.
 | `VBoxTray/Mouse.c` | Mouse pointer integration |
 | `VBoxTray/TimeSync.c` | Guest clock synchronization |
 | `VBoxTray/Clipboard.c` | Shared clipboard (text, images, HTML) |
-| `VBoxTray/ClipFile.c` | Clipboard file transfers (virtual files from the host, guest files to the host) |
+| `VBoxTray/ClipFile.c` | Clipboard file transfers: setup, status and entry points |
+| `VBoxTray/ClipFileObj.c` | Clipboard file transfers, host to guest: virtual files, progress window |
+| `VBoxTray/ClipFileSend.c` | Clipboard file transfers, guest to host: answering the host's requests |
 | `VBoxTray/Stats.c` | Guest statistics |
 | `VBoxTray/Display.c` | Display resizing |
 | `VBoxTray/Seamless.c` | Seamless mode (visible region of the guest windows) |
