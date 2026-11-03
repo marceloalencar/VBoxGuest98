@@ -1,16 +1,19 @@
 @echo off
 rem Builds all components with Visual C++ 6.0 and the Windows 98 DDK, then the
-rem installer with NSIS 2.46 when it is available.
+rem installer with NSIS 2.46 and, for the free build, its floppy image with
+rem Python 3 when they are available.
 rem
 rem Usage: build.cmd [free|checked]
 rem
-rem Override the tool locations with the MSVC6DIR, DDK98DIR and NSIS2DIR
-rem environment variables (defaults: C:\MSVC600, C:\98DDK and C:\NSIS246).
+rem Override the tool locations with the MSVC6DIR, DDK98DIR, NSIS2DIR and
+rem PYTHON environment variables (defaults: C:\MSVC600, C:\98DDK, C:\NSIS246
+rem and python from the PATH).
 
 setlocal
 if "%MSVC6DIR%"=="" set MSVC6DIR=C:\MSVC600
 if "%DDK98DIR%"=="" set DDK98DIR=C:\98DDK
 if "%NSIS2DIR%"=="" set NSIS2DIR=C:\NSIS246
+if "%PYTHON%"=="" set PYTHON=python
 set BUILDTYPE=%1
 if "%BUILDTYPE%"=="" set BUILDTYPE=free
 if /i not "%BUILDTYPE%"=="free" if /i not "%BUILDTYPE%"=="checked" goto usage
@@ -27,7 +30,8 @@ call "%DDK98DIR%\bin\setenv.bat" %DDK98DIR% %BUILDTYPE%
 cd /d "%~dp0"
 rem build.exe does not create the target folders and the link fails without them.
 for %%d in (VBoxGst VBoxTray VBoxControl VBoxNP VBoxMou VBoxSF) do if not exist %%d\%OBJDIR% mkdir %%d\%OBJDIR%
-build -cZ
+rem build.exe by name: plain "build" finds this build.cmd in the current folder first.
+build.exe -cZ
 
 rem VBoxMou.vxd: build.exe has no VxD support, so assemble and link it here.
 "%DDK98DIR%\bin\win98\ml.exe" -nologo -coff -DBLD_COFF -DIS_32 -DMASM6 -DDEBLEVEL=0 -W2 -c -Cx -Zm ^
@@ -56,10 +60,24 @@ if errorlevel 1 goto failed_sf
 
 if not exist "%NSIS2DIR%\makensis.exe" goto no_nsis
 "%NSIS2DIR%\makensis.exe" /V2 /DBUILDTYPE=%BUILDTYPE% installer\VBoxGuest98.nsi
+if errorlevel 1 goto failed_nsis
+
+rem The floppy image with the free installer as SETUP.EXE, when Python 3 is there.
+if /i not "%BUILDTYPE%"=="free" goto end
+"%PYTHON%" --version >nul 2>&1
+if errorlevel 1 goto no_python
+for /f "tokens=3" %%v in ('findstr /c:"#define VBOXGUEST98_VERSION_STRING" inc\VBoxGuest98.h') do set VBGVERSION=%%~v
+"%PYTHON%" installer\mkfloppy.py installer\obj\VBoxGuest98-%VBGVERSION%.img ^
+    installer\obj\VBoxGuest98-%VBGVERSION%.exe=SETUP.EXE
+if errorlevel 1 goto failed_floppy
 goto end
 
 :no_nsis
 echo NSIS 2.46 not found in %NSIS2DIR% (set NSIS2DIR); installer not built.
+goto end
+
+:no_python
+echo Python 3 not found as "%PYTHON%" (set PYTHON); floppy image not built.
 goto end
 
 :usage
@@ -80,6 +98,14 @@ exit /b 1
 
 :failed_sf
 echo VBoxSF.vxd build failed.
+exit /b 1
+
+:failed_nsis
+echo Installer build failed.
+exit /b 1
+
+:failed_floppy
+echo Floppy image build failed.
 exit /b 1
 
 :end

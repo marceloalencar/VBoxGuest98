@@ -31,6 +31,8 @@ VirtualBox Guest Additions backport for Microsoft Windows 98/ME, using Windows D
 
 ## Installing
 Run `VBoxGuest98-x.y.z.exe` in the guest and restart Windows when it asks.
+On a guest without a way to copy files in yet, insert the floppy image
+`VBoxGuest98-x.y.z.img` in the VM and run `A:\SETUP.EXE`.
 Command line options (upper or lower case):
 - `/S`: silent installation
 - `/R`: restart Windows without asking at the end
@@ -101,6 +103,7 @@ VM window's edge. Turn mouse integration off with Host+I while playing.
 | `VBoxTray/Utf.c` | UTF-8 and ANSI code page conversions |
 | `VBoxTray/VBoxTray.rc` | Icon (VirtualBox OSE icon, GPLv3) and version information |
 | `installer/VBoxGuest98.nsi` | Installer and uninstaller (NSIS 2.46) |
+| `installer/mkfloppy.py` | Floppy image with the installer (FAT12, boots on to the hard disk) |
 
 # Compiling:
 Microsoft Visual C++ 6.0
@@ -109,7 +112,11 @@ Microsoft Windows 98 DDK
 
 [NSIS 2.46](https://sourceforge.net/projects/nsis/files/NSIS%202/2.46/) (optional)
 
+Python 3 (optional, for the floppy image)
+
 Run `build.cmd` (free build) or `build.cmd checked` in this folder. It expects
-Visual C++ in `C:\MSVC600`, the Windows 98 DDK in `C:\98DDK` and NSIS in
-`C:\NSIS246`; set `MSVC6DIR`, `DDK98DIR` and `NSIS2DIR` to use other
-locations.
+Visual C++ in `C:\MSVC600`, the Windows 98 DDK in `C:\98DDK`, NSIS in
+`C:\NSIS246` and `python` in the PATH; set `MSVC6DIR`, `DDK98DIR`, `NSIS2DIR`
+and `PYTHON` to use other locations. The free build also writes
+`installer\obj\VBoxGuest98-x.y.z.img`, a 1.44 MB floppy with the installer as
+`SETUP.EXE`, for guests without guest control yet.
