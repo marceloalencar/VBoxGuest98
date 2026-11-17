@@ -101,6 +101,35 @@ static int vgdrvHgcmPoll(VMMDevHGCMRequestHeader volatile *pHGCMReq, UINT32 cMsT
     return VINF_SUCCESS;
 }
 
+/** How long to look for a quick completion before blocking (microseconds). */
+#define VGDRV_HGCM_SPIN_US      200
+/** The pause between two looks (microseconds). */
+#define VGDRV_HGCM_SPIN_STEP_US 5
+
+/**
+ * Looks for the completion of an HGCM request for a short while.
+ *
+ * The host completes most requests (shared folders I/O, guest properties)
+ * within some tens of microseconds, on another thread.  Blocking on the event
+ * instead costs an interrupt, a DPC and a reschedule of the caller, which is
+ * several times that.
+ *
+ * @returns TRUE if the request completed.
+ */
+static BOOLEAN vgdrvHgcmSpin(VMMDevHGCMRequestHeader volatile *pHGCMReq)
+{
+    UINT32 cUsLeft = VGDRV_HGCM_SPIN_US;
+
+    while (!(pHGCMReq->fu32Flags & VBOX_HGCM_REQ_DONE))
+    {
+        if (cUsLeft < VGDRV_HGCM_SPIN_STEP_US)
+            return FALSE;
+        KeStallExecutionProcessor(VGDRV_HGCM_SPIN_STEP_US);
+        cUsLeft -= VGDRV_HGCM_SPIN_STEP_US;
+    }
+    return TRUE;
+}
+
 /**
  * Submits an HGCM request and waits for it to complete.
  *
@@ -133,6 +162,8 @@ static int vgdrvHgcmPerform(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession
     {
         if (fPoll)
             rc = vgdrvHgcmPoll(pHGCMReq, cMsTimeout);
+        else if (vgdrvHgcmSpin(pHGCMReq))
+            rc = VINF_SUCCESS;
         else
             rc = VGDrvCommonWaitForHgcm(pDevExt, pSession, pHGCMReq, cMsTimeout);
         if (pHGCMReq->fu32Flags & VBOX_HGCM_REQ_DONE)
