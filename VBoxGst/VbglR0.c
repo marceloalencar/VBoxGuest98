@@ -38,6 +38,29 @@ typedef struct VBGLR0REQPRIV
 
 VBGLDATA g_vbgldata;
 
+/** Number of request buffers kept for reuse. */
+#define VBGLR0_REQ_CACHE_SIZE   8
+
+/** @name Cache of request buffers.
+ * Nearly every request fits in a page (the mouse status, an HGCM call with
+ * its parameters...), so freed buffers of one page are kept and handed out
+ * again instead of going through AllocateCommonBuffer and FreeCommonBuffer
+ * for each request.  A cached buffer keeps PhysAddr and cbAlloc in its header.
+ * @{ */
+/** Protects the cache.  Only VbglR0GRAlloc and VbglR0GRFree take it, both at
+ *  PASSIVE_LEVEL; VbglR0GRPerform (ISR) never touches the cache. */
+static KSPIN_LOCK       g_ReqCacheLock;
+/** The cached buffers. */
+static VBGLR0REQPRIV   *g_apReqCache[VBGLR0_REQ_CACHE_SIZE];
+/** How many there are. */
+static ULONG            g_cReqCached;
+#if DBG
+/** Common buffers allocated, requests served from the cache and the most
+ *  buffers the cache held (logged by VbglR0TerminatePrimary). */
+static ULONG            g_cReqAllocated, g_cReqCacheHits, g_cReqCachedMax;
+#endif
+/** @} */
+
 
 /**
  * Returns the private header of a request.
@@ -85,6 +108,8 @@ int VbglR0InitPrimary(PDEVICE_OBJECT pPdo, USHORT portVMMDev, VMMDevMemory volat
     RtlZeroMemory(&g_vbgldata, sizeof(g_vbgldata));
     g_vbgldata.portVMMDev    = portVMMDev;
     g_vbgldata.pVMMDevMemory = pVMMDevMemory;
+    KeInitializeSpinLock(&g_ReqCacheLock);
+    g_cReqCached = 0;
 
     RtlZeroMemory(&DevDesc, sizeof(DevDesc));
     DevDesc.Version       = DEVICE_DESCRIPTION_VERSION;
@@ -108,6 +133,15 @@ void VbglR0TerminatePrimary(void)
 {
     if (g_vbgldata.pDmaAdapter)
     {
+        /* No requests are made any more, so no lock is needed. */
+        VGDRV_LOG(("VbglR0: %u request buffers allocated, %u requests served from the cache, %u cached at most\n",
+                   g_cReqAllocated, g_cReqCacheHits, g_cReqCachedMax));
+        while (g_cReqCached > 0)
+        {
+            VBGLR0REQPRIV *pPriv = g_apReqCache[--g_cReqCached];
+            g_vbgldata.pDmaAdapter->DmaOperations->FreeCommonBuffer(g_vbgldata.pDmaAdapter, pPriv->cbAlloc,
+                                                                   pPriv->PhysAddr, pPriv, FALSE);
+        }
         g_vbgldata.pDmaAdapter->DmaOperations->PutDmaAdapter(g_vbgldata.pDmaAdapter);
         g_vbgldata.pDmaAdapter = NULL;
     }
@@ -129,9 +163,10 @@ void VbglR0TerminatePrimary(void)
 int VbglR0GRAlloc(VMMDevRequestHeader **ppReq, ULONG cbReq, VMMDevRequestType enmReqType)
 {
     PHYSICAL_ADDRESS PhysAddr;
-    VBGLR0REQPRIV *pPriv;
+    VBGLR0REQPRIV *pPriv = NULL;
     VMMDevRequestHeader *pReq;
     ULONG cbAlloc;
+    KIRQL OldIrql;
 
     *ppReq = NULL;
     if (!g_vbgldata.pDmaAdapter)
@@ -140,19 +175,42 @@ int VbglR0GRAlloc(VMMDevRequestHeader **ppReq, ULONG cbReq, VMMDevRequestType en
         || cbReq > VBOXGUEST98_MAX_VMMDEV_REQUEST_SIZE)
         return VERR_INVALID_PARAMETER;
 
+    /* What fits in a page gets a whole page, from the cache if it has one. */
     cbAlloc = sizeof(VBGLR0REQPRIV) + cbReq;
-    pPriv = (VBGLR0REQPRIV *)g_vbgldata.pDmaAdapter->DmaOperations->AllocateCommonBuffer(g_vbgldata.pDmaAdapter,
-                                                                                         cbAlloc, &PhysAddr, FALSE);
-    if (!pPriv)
-        return VERR_NO_MEMORY;
-    if (PhysAddr.HighPart != 0)
+    if (cbAlloc <= PAGE_SIZE)
     {
-        /* VMMDev only takes 32-bit physical addresses. */
-        g_vbgldata.pDmaAdapter->DmaOperations->FreeCommonBuffer(g_vbgldata.pDmaAdapter, cbAlloc, PhysAddr, pPriv, FALSE);
-        return VERR_OUT_OF_RANGE;
+        cbAlloc = PAGE_SIZE;
+        KeAcquireSpinLock(&g_ReqCacheLock, &OldIrql);
+        if (g_cReqCached > 0)
+        {
+            pPriv = g_apReqCache[--g_cReqCached];
+            PhysAddr = pPriv->PhysAddr;
+#if DBG
+            g_cReqCacheHits++;
+#endif
+        }
+        KeReleaseSpinLock(&g_ReqCacheLock, OldIrql);
+    }
+    if (!pPriv)
+    {
+        pPriv = (VBGLR0REQPRIV *)g_vbgldata.pDmaAdapter->DmaOperations->AllocateCommonBuffer(g_vbgldata.pDmaAdapter,
+                                                                                             cbAlloc, &PhysAddr, FALSE);
+        if (!pPriv)
+            return VERR_NO_MEMORY;
+        if (PhysAddr.HighPart != 0)
+        {
+            /* VMMDev only takes 32-bit physical addresses. */
+            g_vbgldata.pDmaAdapter->DmaOperations->FreeCommonBuffer(g_vbgldata.pDmaAdapter, cbAlloc, PhysAddr, pPriv,
+                                                                   FALSE);
+            return VERR_OUT_OF_RANGE;
+        }
+#if DBG
+        InterlockedIncrement((PLONG)&g_cReqAllocated);
+#endif
     }
 
-    RtlZeroMemory(pPriv, cbAlloc);
+    /* Only what the request uses is zeroed, not the rest of the page. */
+    RtlZeroMemory(pPriv, sizeof(VBGLR0REQPRIV) + cbReq);
     pPriv->PhysAddr = PhysAddr;
     pPriv->cbAlloc  = cbAlloc;
     pPriv->u32Magic = VBGLR0REQPRIV_MAGIC;
@@ -212,13 +270,32 @@ int VbglR0GRPerform(VMMDevRequestHeader *pReq)
 void VbglR0GRFree(VMMDevRequestHeader *pReq)
 {
     VBGLR0REQPRIV *pPriv;
+    KIRQL OldIrql;
 
     if (!pReq || !g_vbgldata.pDmaAdapter)
         return;
     pPriv = vbglR0GRGetPriv(pReq);
     if (pPriv->u32Magic != VBGLR0REQPRIV_MAGIC)
         return;
+    /* Dead from here on, also while in the cache: a second free does nothing. */
     pPriv->u32Magic = ~VBGLR0REQPRIV_MAGIC;
+
+    if (pPriv->cbAlloc == PAGE_SIZE)
+    {
+        KeAcquireSpinLock(&g_ReqCacheLock, &OldIrql);
+        if (g_cReqCached < VBGLR0_REQ_CACHE_SIZE)
+        {
+            g_apReqCache[g_cReqCached++] = pPriv;
+#if DBG
+            if (g_cReqCached > g_cReqCachedMax)
+                g_cReqCachedMax = g_cReqCached;
+#endif
+            pPriv = NULL;
+        }
+        KeReleaseSpinLock(&g_ReqCacheLock, OldIrql);
+        if (!pPriv)
+            return;
+    }
     g_vbgldata.pDmaAdapter->DmaOperations->FreeCommonBuffer(g_vbgldata.pDmaAdapter, pPriv->cbAlloc,
                                                            pPriv->PhysAddr, pPriv, FALSE);
 }
