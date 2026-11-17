@@ -46,6 +46,11 @@
 #define VBOXGSTCTRL_OUTPUT_WAIT_MS      5000
 /** How often to check meanwhile (ms). */
 #define VBOXGSTCTRL_OUTPUT_POLL_MS      50
+/** How long the answer to a request for output is held back while the program
+ *  has written nothing (ms). */
+#define VBOXGSTCTRL_OUTPUT_IDLE_MS      50
+/** How often to look at the pipes meanwhile (ms). */
+#define VBOXGSTCTRL_OUTPUT_IDLE_STEP_MS 10
 /** Failed waits in a row before the root gives up. */
 #define VBOXGSTCTRL_MAX_ERRORS          10
 /** The guest features reported to the host. */
@@ -936,7 +941,7 @@ static void vboxGstCtrlSessionExec(VBOXGSTCTRLSESSION *pSession, UINT32 idClient
 
 /**
  * Handles HOST_MSG_EXEC_GET_OUTPUT: sends what the program wrote so far,
- * nothing if it wrote nothing (the host asks again).
+ * nothing if it wrote nothing for a moment (the host asks again).
  */
 static void vboxGstCtrlSessionOutput(VBOXGSTCTRLSESSION *pSession, UINT32 idClient)
 {
@@ -989,15 +994,38 @@ static void vboxGstCtrlSessionOutput(VBOXGSTCTRLSESSION *pSession, UINT32 idClie
         phPipe = uHandle == GUEST_PROC_OUT_H_STDERR ? &pProc->hStdErrR : &pProc->hStdOutR;
         if (*phPipe)
         {
-            /* Checked before looking at the pipe: whatever the program wrote
-               is in it by then. */
-            BOOL fEnded = pProc->fEnded;
+            HANDLE *phOther = uHandle == GUEST_PROC_OUT_H_STDERR ? &pProc->hStdOutR : &pProc->hStdErrR;
+            DWORD cMsWaited = 0;
+            DWORD cbOther;
+            BOOL fEnded;
+            BOOL fPeeked;
 
-            /* Never blocks: only what is there is read.  Windows 9x doesn't
-               fail PeekNamedPipe when the writer is gone (ERROR_BROKEN_PIPE,
-               as NT does), so an empty pipe of an ended program is its end
-               too. */
-            if (PeekNamedPipe(*phPipe, NULL, 0, NULL, &cbAvail, NULL) && (cbAvail || !fEnded))
+            /* The host asks again as soon as it gets an empty answer, so a
+               quiet program's answer is held back for a moment: answering at
+               once keeps this thread, the driver and the host busy, at the
+               expense of the program.  Not while the other pipe has data,
+               which the host asks for next. */
+            for (;;)
+            {
+                /* Checked before looking at the pipe: whatever the program
+                   wrote is in it by then. */
+                fEnded = pProc->fEnded;
+                fPeeked = PeekNamedPipe(*phPipe, NULL, 0, NULL, &cbAvail, NULL);
+                if (!fPeeked || cbAvail || fEnded || cMsWaited >= VBOXGSTCTRL_OUTPUT_IDLE_MS)
+                    break;
+                cbOther = 0;
+                if (*phOther && PeekNamedPipe(*phOther, NULL, 0, NULL, &cbOther, NULL) && cbOther)
+                    break;
+                if (WaitForSingleObject(pSession->hEvtStop, VBOXGSTCTRL_OUTPUT_IDLE_STEP_MS) != WAIT_TIMEOUT)
+                    break;
+                cMsWaited += VBOXGSTCTRL_OUTPUT_IDLE_STEP_MS;
+            }
+
+            /* The read never blocks: only what is there is read.  Windows 9x
+               doesn't fail PeekNamedPipe when the writer is gone
+               (ERROR_BROKEN_PIPE, as NT does), so an empty pipe of an ended
+               program is its end too. */
+            if (fPeeked && (cbAvail || !fEnded))
             {
                 if (cbAvail && !ReadFile(*phPipe, pbData, cbAvail < VBOXGSTCTRL_OUTPUT_SIZE ? cbAvail
                                                                                           : VBOXGSTCTRL_OUTPUT_SIZE,
