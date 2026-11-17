@@ -708,7 +708,15 @@ static int __cdecl sfNetDir(pioreq pir)
                 pir->ir_error = SF_ERROR_NOT_ENOUGH_MEMORY;
                 return pir->ir_error;
             }
-            SfHostPathToParsed(pPath, pir->ir_ppath2);
+            /* An 8.3 path within MAX_PATH can grow far beyond it with the long
+               names, and the size of IFSMgr's buffer isn't passed.  Beyond
+               MAX_PATH, give the path back as it came, which fits and still
+               names the object: the program loader asks for the long form of
+               every program it starts, and fails it if this fails. */
+            if (pPath->u16Length / sizeof(WCHAR) >= MAX_PATH)
+                SfMemCopy(pir->ir_ppath2, pir->ir_ppath, IFSPathSize(pir->ir_ppath));
+            else
+                SfHostPathToParsed(pPath, pir->ir_ppath2);
             SfHeapFree(pPath, 0);
             pir->ir_error = 0;
             return 0;

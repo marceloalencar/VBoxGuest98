@@ -166,7 +166,7 @@ static const char *vboxNpSkipServer(const char *pszRemote)
 static char vboxNpDriveLetter(const char *pszLocal)
 {
     char ch;
-    if (!pszLocal || pszLocal[1] != ':' || pszLocal[2] != '\0')
+    if (!pszLocal || !pszLocal[0] || pszLocal[1] != ':' || pszLocal[2] != '\0')
         return 0;
     ch = pszLocal[0];
     if (ch >= 'a' && ch <= 'z')

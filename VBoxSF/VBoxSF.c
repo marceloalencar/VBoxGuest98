@@ -417,15 +417,26 @@ void __cdecl VBoxSFInitComplete(void)
  */
 ULONG __cdecl VBoxSFW32IoCtl(ULONG uCode, DIOCPARAMETERS *pParms)
 {
+    /* Without the mutex VBoxSF didn't register and SF_LOCK can't be used. */
+    if (!g_hSfMutex && uCode != DIOC_OPEN && uCode != DIOC_CLOSEHANDLE)
+        return SF_ERROR_NOT_SUPPORTED;
+
     switch (uCode)
     {
         case DIOC_OPEN:
         case DIOC_CLOSEHANDLE:
             return 0;
 
+        /* SF_LOCK around SfHostConnect, as in SfNetConnect: before the first
+           connection two callers would both open VBoxGst (the open waits for
+           an NTKERN work item) and leave the client and the direct entry in
+           different driver sessions. */
         case VBOXSF_IOCTL_LOG_MAPPINGS:
         {
-            int rc = SfHostConnect(FALSE);
+            int rc;
+            SF_LOCK();
+            rc = SfHostConnect(FALSE);
+            SF_UNLOCK();
             if (rc < 0)
             {
                 SfLogRel("no host connection (%d)\n", rc);
@@ -442,7 +453,9 @@ ULONG __cdecl VBoxSFW32IoCtl(ULONG uCode, DIOCPARAMETERS *pParms)
 
             if (!pParms->lpvOutBuffer || pParms->cbOutBuffer < sizeof(WCHAR))
                 return SF_ERROR_INVALID_PARAMETER;
+            SF_LOCK();
             rc = SfHostConnect(FALSE);
+            SF_UNLOCK();
             if (rc >= 0)
                 rc = SfHostQueryNames((WCHAR *)pParms->lpvOutBuffer, pParms->cbOutBuffer / sizeof(WCHAR), &cwcRet);
             if (rc < 0)

@@ -185,11 +185,18 @@ unsigned __stdcall VBoxStatsThread(void *pvUser)
 
     while (!g_fVBoxTrayShutdown)
     {
-        /* Start the performance counters on demand; they cost the system a little. */
+        /* Start the performance counters on demand, and stop them when the
+           host turns the statistics off; they cost the system a little. */
         if (cMsInterval && !fCounters)
         {
             vboxStatsReadCounter("PerfStats\\StartStat", VBOXSTATS_CACHE_COUNTER, NULL);
             fCounters = vboxStatsReadCounter("PerfStats\\StartStat", VBOXSTATS_CPU_COUNTER, NULL);
+        }
+        else if (!cMsInterval && fCounters)
+        {
+            vboxStatsReadCounter("PerfStats\\StopStat", VBOXSTATS_CPU_COUNTER, NULL);
+            vboxStatsReadCounter("PerfStats\\StopStat", VBOXSTATS_CACHE_COUNTER, NULL);
+            fCounters = FALSE;
         }
 
         if (cMsInterval && cMsSinceReport >= cMsInterval)

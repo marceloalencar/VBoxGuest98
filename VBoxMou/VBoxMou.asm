@@ -62,6 +62,7 @@ LastInstance            dd      0       ; Mouse_Instance of the last PS/2 packet
 DosX                    dd      0       ; host position for the MS-DOS pointer (0..0FFFFh)
 DosY                    dd      0
 fDosPending             dd      0       ; VBoxMou_Dos_Event is scheduled
+DosEvent                dd      0       ; its handle, cancelled when unloading
 DosSizeX                dd      0       ; size the host position is scaled to
 DosSizeY                dd      0
 szLoaded                db      'VBoxMou: loaded', 10, 0
@@ -200,6 +201,7 @@ EndProc PickSize
 ;******************************************************************************
 BeginProc VBoxMou_Dos_Event
         mov     [fDosPending], 0
+        mov     [DosEvent], 0
         Push_Client_State USES_EDI
         VMMCall Begin_Nest_V86_Exec
         and     [ebp].Client_EFlags, NOT IF_MASK  ; no interrupts in between
@@ -303,6 +305,19 @@ DI_Fail:
 EndProc VBoxMou_Dynamic_Init
 
 BeginProc VBoxMou_Dynamic_Exit
+        ; An MS-DOS VM that hasn't run yet may still have VBoxMou_Dos_Event
+        ; scheduled: cancel it, the code goes away with this VxD.
+        pushfd
+        cli
+        cmp     [fDosPending], 0
+        je      short DE_NoEvent
+        mov     esi, [DosEvent]
+        VMMCall Cancel_Priority_VM_Event
+        mov     [fDosPending], 0
+        mov     [DosEvent], 0
+DE_NoEvent:
+        popfd
+
         cmp     [fHooked], 0
         je      short DE_Done
         mov     eax, @@VMD_Post_Pointer_Message
@@ -344,6 +359,7 @@ BeginProc SetDosPos
         mov     esi, OFFSET32 VBoxMou_Dos_Event
         xor     edi, edi
         VMMCall Call_Priority_VM_Event
+        mov     [DosEvent], esi         ; for VBoxMou_Dynamic_Exit
         pop     ebx
 SD_Done:
         ret
@@ -384,11 +400,11 @@ DC_Post:
         mov     ebx, [esi].lpvInBuffer
         push    esi
         push    ebx
+        mov     esi, [ebx]              ; the caller's buffer before the cli:
+        mov     edi, [ebx + 4]          ; a page fault there needs interrupts
         pushfd
         cli
         mov     [fOwnPost], 1
-        mov     esi, [ebx]
-        mov     edi, [ebx + 4]
         movzx   eax, BYTE PTR [LastButtons]
         xor     ebx, ebx                ; the rest zero, like VMOUSE's own PS/2
         xor     ecx, ecx                ; packets (ECX = 1 scrolled up on each move)

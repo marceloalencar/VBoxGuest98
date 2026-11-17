@@ -303,7 +303,7 @@ static int __cdecl sfFileSeek(pioreq pir)
 {
     SFFILE *pFile = (SFFILE *)pir->ir_fh;
     SHFLFSOBJINFO Info;
-    LONG offNew;
+    INT64 offNew;
     int rc;
 
     if (pir->ir_flags != FILE_END)
@@ -317,10 +317,18 @@ static int __cdecl sfFileSeek(pioreq pir)
         pir->ir_error = SfRcToWin32(rc);
         return pir->ir_error;
     }
-    offNew = (LONG)Info.cbObject + (LONG)pir->ir_pos;
+    /* In 64 bits: files of 2 to 4 GB have the sign bit set in 32 bits.  The
+       displacement is signed. */
+    offNew = Info.cbObject + (LONG)pir->ir_pos;
     if (offNew < 0)
     {
         pir->ir_error = SF_ERROR_NEGATIVE_SEEK;
+        return pir->ir_error;
+    }
+    if (SF_HI32(offNew))
+    {
+        /* Past 4 GB, out of reach of Windows 98's file positions. */
+        pir->ir_error = SF_ERROR_INVALID_PARAMETER;
         return pir->ir_error;
     }
     pir->ir_pos   = (ULONG)offNew;
