@@ -587,6 +587,15 @@ static unsigned __stdcall vboxGstCtrlProcThread(void *pvUser)
         VBoxTrayLogRel("GstCtrl: \"%s\" reached its time limit of %lu ms, %s\n", pProc->szExe, pProc->cMsTimeLimit,
                        uStatus == PROC_STS_TOK ? "ended" : "couldn't be ended");
     }
+    else if (g_fVBoxTrayWindowsShutdown)
+    {
+        /* Windows shuts down: it closes the program itself, which may well be
+           the one shutting it down (ExitWindowsEx carries the shutdown out in
+           the calling thread on Windows 9x, ending it would stop the shutdown
+           half way). */
+        VBoxTrayLogRel("GstCtrl: \"%s\" left for Windows to close\n", pProc->szExe);
+        uStatus = 0; /* The session's client is gone, nothing to report to. */
+    }
     else
     {
         /* The session is closing: like upstream (VGSvcGstCtrlSessionClose), its
@@ -1220,14 +1229,16 @@ static void vboxGstCtrlSessionShutdown(VBOXGSTCTRLSESSION *pSession, UINT32 idCl
         return;
 
     /* Windows 98 needs no shutdown privilege; EWX_POWEROFF ends with the APM
-       power off the host sees. */
+       power off the host sees.  The window's thread calls ExitWindowsEx (see
+       WM_VBOXTRAY_EXIT_WINDOWS): this one ends when VBoxTray stops, half way
+       through the shutdown. */
     uFlags = (fAction & GUEST_SHUTDOWN_FLAG_REBOOT) ? EWX_REBOOT : EWX_SHUTDOWN | EWX_POWEROFF;
     if (fAction & GUEST_SHUTDOWN_FLAG_FORCE)
         uFlags |= EWX_FORCE;
     VBoxTrayLogRel("GstCtrl: the host asks to %s Windows%s\n", (fAction & GUEST_SHUTDOWN_FLAG_REBOOT) ? "restart" : "shut down",
                    (fAction & GUEST_SHUTDOWN_FLAG_FORCE) ? " (forced)" : "");
-    if (!ExitWindowsEx(uFlags, 0))
-        VBoxTrayLogRel("GstCtrl: ExitWindowsEx failed, error %lu\n", GetLastError());
+    if (!PostMessage(g_hwndVBoxTray, WM_VBOXTRAY_EXIT_WINDOWS, uFlags, 0))
+        VBoxTrayLogRel("GstCtrl: PostMessage failed, error %lu\n", GetLastError());
 }
 
 /**

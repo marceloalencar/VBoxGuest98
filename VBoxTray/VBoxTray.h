@@ -92,6 +92,16 @@ int    VbglR3SeamlessSendRects(HANDLE hDevice, const RTRECT *paRects, UINT32 cRe
 extern volatile LONG g_fVBoxTrayShutdown;
 /** The hidden VBoxTray window (created before the services start). */
 extern HWND g_hwndVBoxTray;
+/** Set when VBoxTray stops because Windows shuts down (WM_ENDSESSION): the
+ *  programs started from the host are left for Windows to close, one of them
+ *  may be the one shutting Windows down. */
+extern volatile LONG g_fVBoxTrayWindowsShutdown;
+
+/** Posted to g_hwndVBoxTray to shut Windows down, wParam: the EWX_XXX flags.
+ *  On Windows 9x the thread calling ExitWindowsEx carries the shutdown out
+ *  and must not be ended meanwhile, so it is the window's thread, the one
+ *  that stays to the end. */
+#define WM_VBOXTRAY_EXIT_WINDOWS    (WM_APP + 2)
 
 /** Writes a formatted line (wsprintf format, ending with a newline) to the
  *  release log, prefixed with "VBoxTray: ".  Any thread may call it. */

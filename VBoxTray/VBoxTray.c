@@ -83,6 +83,7 @@ typedef struct VBOXTRAYSERVICE
 *********************************************************************************************************************************/
 
 volatile LONG g_fVBoxTrayShutdown = FALSE;
+volatile LONG g_fVBoxTrayWindowsShutdown = FALSE;
 HWND g_hwndVBoxTray = NULL;
 
 static VBOXTRAYSERVICE g_aServices[] =
@@ -200,7 +201,17 @@ static LRESULT CALLBACK vboxTrayWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPA
             if (wParam && (lParam & ENDSESSION_LOGOFF))
                 VBoxTrayLogRel("the user logs off\n");
             else if (wParam)
+            {
+                InterlockedExchange((LPLONG)&g_fVBoxTrayWindowsShutdown, TRUE);
                 DestroyWindow(hwnd);
+            }
+            return 0;
+
+        case WM_VBOXTRAY_EXIT_WINDOWS:
+            /* Returns only if the shutdown doesn't happen (refused by some
+               program); otherwise WM_ENDSESSION comes in meanwhile. */
+            if (!ExitWindowsEx((UINT)wParam, 0))
+                VBoxTrayLogRel("ExitWindowsEx failed, error %lu\n", GetLastError());
             return 0;
 
         case WM_DESTROY:
