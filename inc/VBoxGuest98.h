@@ -115,6 +115,12 @@
  *  program loader), where NTKERN returns from I/O controls without passing
  *  them to the driver. */
 #define IOCTL_VBOXGUEST98_INTERNAL_GET_DIRECT_HGCM  VBOXGUEST98_IOCTL_CODE(66)
+/** Get the counter of restores from a saved state.  Out:
+ *  VBOXGUEST98RESTORES.  The host forgets the HGCM services' handles (open
+ *  shared folder files) on a restore and hands out the same values again, so
+ *  a client must not use a handle it got before the counter changed.  Older
+ *  drivers fail this with STATUS_INVALID_DEVICE_REQUEST. */
+#define IOCTL_VBOXGUEST98_INTERNAL_GET_RESTORES     VBOXGUEST98_IOCTL_CODE(67)
 /** @} */
 
 
@@ -240,6 +246,16 @@ typedef struct VBOXGUEST98DIRECTHGCM
     /** The session to pass, valid while the handle is open. */
     PVOID pvSession;
 } VBOXGUEST98DIRECTHGCM;
+
+/** IOCTL_VBOXGUEST98_INTERNAL_GET_RESTORES output. */
+typedef struct VBOXGUEST98RESTORES
+{
+    /** Counts the VMMDEV_EVENT_RESTORED interrupts since the driver loaded,
+     *  bumped by the ISR before anything else runs after a restore.  Valid
+     *  while the handle the I/O control came on is open (the driver isn't
+     *  unloaded before). */
+    UINT32 volatile *pcRestores;
+} VBOXGUEST98RESTORES;
 
 #pragma pack(pop)
 

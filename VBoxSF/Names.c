@@ -232,6 +232,7 @@ static int sfFindInDir(SHFLROOT idRoot, const SHFLSTRING *pDir, const WCHAR *pwc
     BYTE *pbBuf;
     BOOL fAliasLike = SfIsAlias(pwcName, cwcName);
     int rcFound = VERR_FILE_NOT_FOUND;
+    UINT32 uGen;
     int rc;
 
     pbBuf = (BYTE *)SfHeapAllocate(SF_NAMES_BUF_SIZE, 0);
@@ -240,6 +241,7 @@ static int sfFindInDir(SHFLROOT idRoot, const SHFLSTRING *pDir, const WCHAR *pwc
     SfMemZero(&Parms, sizeof(Parms));
     Parms.Handle      = SHFL_HANDLE_NIL;
     Parms.CreateFlags = SHFL_CF_DIRECTORY | SHFL_CF_ACT_OPEN_IF_EXISTS | SHFL_CF_ACT_FAIL_IF_NEW | SHFL_CF_ACCESS_READ;
+    uGen = SfHostGeneration();
     rc = SfHostCreate(idRoot, pDir, &Parms);
     if (rc >= 0 && Parms.Handle == SHFL_HANDLE_NIL)
         rc = VERR_PATH_NOT_FOUND;
@@ -247,7 +249,7 @@ static int sfFindInDir(SHFLROOT idRoot, const SHFLSTRING *pDir, const WCHAR *pwc
     {
         ULONG cbBuf = SF_NAMES_BUF_SIZE, off = 0;
         UINT32 cEntries, i;
-        rc = SfHostList(idRoot, Parms.Handle, SHFL_LIST_NONE, NULL, pbBuf, &cbBuf, &cEntries);
+        rc = SfHostList(idRoot, SfHostHandle(Parms.Handle, uGen), SHFL_LIST_NONE, NULL, pbBuf, &cbBuf, &cEntries);
         if (rc < 0 || !cEntries)
             break;
         for (i = 0; i < cEntries && rcFound < 0; i++)
@@ -292,7 +294,7 @@ static int sfFindInDir(SHFLROOT idRoot, const SHFLSTRING *pDir, const WCHAR *pwc
         }
     }
     if (Parms.Handle != SHFL_HANDLE_NIL)
-        SfHostClose(idRoot, Parms.Handle);
+        SfHostClose(idRoot, SfHostHandle(Parms.Handle, uGen));
     SfHeapFree(pbBuf, 0);
     return rcFound >= 0 ? rcFound : rc < 0 && rc != VERR_NO_MORE_FILES ? rc : VERR_FILE_NOT_FOUND;
 }

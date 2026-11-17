@@ -30,9 +30,15 @@ typedef struct SFFILE
 {
     SHFLROOT   idRoot;
     SHFLHANDLE hHost;
+    /** SfHostGeneration() from before hHost was opened. */
+    UINT32     uGen;
     /** The path relative to the share, for ENUMH_GETFILENAME. */
     path_t     ppath;
 } SFFILE;
+
+/** The host handle of an open file, SHFL_HANDLE_NIL (refused with
+ *  VERR_INVALID_HANDLE) after a restore of the VM: see SfHostHandle. */
+#define sfFileHost(pFile)   SfHostHandle((pFile)->hHost, (pFile)->uGen)
 
 
 /*********************************************************************************************************************************
@@ -81,7 +87,7 @@ static int sfFileQueryInfo(SFFILE *pFile, SHFLFSOBJINFO *pInfo)
 {
     ULONG cbInfo = sizeof(*pInfo);
     SfMemZero(pInfo, sizeof(*pInfo));
-    return SfHostInformation(pFile->idRoot, pFile->hHost, SHFL_INFO_GET | SHFL_INFO_FILE, pInfo, &cbInfo);
+    return SfHostInformation(pFile->idRoot, sfFileHost(pFile), SHFL_INFO_GET | SHFL_INFO_FILE, pInfo, &cbInfo);
 }
 
 
@@ -98,6 +104,7 @@ int __cdecl SfFileOpen(pioreq pir)
     SHFLCREATEPARMS Parms;
     SHFLSTRING *pPath;
     SFFILE *pFile;
+    UINT32 uGen;
     int rc;
 
     /* No volume labels on a share, and no taking over of files left open before Windows. */
@@ -157,6 +164,7 @@ int __cdecl SfFileOpen(pioreq pir)
         Parms.CreateFlags |= SHFL_CF_ACCESS_DENYWRITE;
     else if (fShare == SHARE_DENYREAD)
         Parms.CreateFlags |= SHFL_CF_ACCESS_DENYREAD;
+    uGen = SfHostGeneration();
     rc = SfHostCreate(pRes->idRoot, pPath, &Parms);
     SfHeapFree(pPath, 0);
     if (rc >= 0 && Parms.Handle == SHFL_HANDLE_NIL)
@@ -165,7 +173,7 @@ int __cdecl SfFileOpen(pioreq pir)
            : Parms.Result == SHFL_FILE_EXISTS    ? VERR_ALREADY_EXISTS : VERR_ACCESS_DENIED;
     if (rc >= 0 && (SF_DOS_ATTR(&Parms.Info) & FILE_ATTRIBUTE_DIRECTORY))
     {
-        SfHostClose(pRes->idRoot, Parms.Handle);
+        SfHostClose(pRes->idRoot, SfHostHandle(Parms.Handle, uGen));
         rc = VERR_ACCESS_DENIED;
     }
     if (rc < 0)
@@ -179,6 +187,7 @@ int __cdecl SfFileOpen(pioreq pir)
 
     pFile->idRoot = pRes->idRoot;
     pFile->hHost  = Parms.Handle;
+    pFile->uGen   = uGen;
     pir->ir_fh                 = pFile;
     pir->ir_hfunc->hf_read     = sfFileRead;
     pir->ir_hfunc->hf_write    = sfFileWrite;
@@ -218,7 +227,7 @@ static int __cdecl sfFileRead(pioreq pir)
     {
         ULONG cbChunk = cbLeft < SF_MAX_IO_CHUNK ? cbLeft : SF_MAX_IO_CHUNK;
         ULONG cbRead = cbChunk;
-        rc = SfHostRead(pFile->idRoot, pFile->hHost, (UINT64)(pir->ir_pos + cbDone), pb + cbDone, &cbRead, fPaging);
+        rc = SfHostRead(pFile->idRoot, sfFileHost(pFile), (UINT64)(pir->ir_pos + cbDone), pb + cbDone, &cbRead, fPaging);
         if (rc < 0)
             break;
         cbDone += cbRead;
@@ -258,7 +267,7 @@ static int __cdecl sfFileWrite(pioreq pir)
 
     if (!cbLeft)
     {
-        rc = SfHostSetFileSize(pFile->idRoot, pFile->hHost, (UINT64)pir->ir_pos);
+        rc = SfHostSetFileSize(pFile->idRoot, sfFileHost(pFile), (UINT64)pir->ir_pos);
         pir->ir_error = rc >= 0 ? 0 : SfRcToWin32(rc);
         return pir->ir_error;
     }
@@ -266,7 +275,7 @@ static int __cdecl sfFileWrite(pioreq pir)
     {
         ULONG cbChunk = cbLeft < SF_MAX_IO_CHUNK ? cbLeft : SF_MAX_IO_CHUNK;
         ULONG cbWritten = cbChunk;
-        rc = SfHostWrite(pFile->idRoot, pFile->hHost, (UINT64)(pir->ir_pos + cbDone), pb + cbDone, &cbWritten,
+        rc = SfHostWrite(pFile->idRoot, sfFileHost(pFile), (UINT64)(pir->ir_pos + cbDone), pb + cbDone, &cbWritten,
                          fPaging);
         if (rc < 0)
             break;
@@ -328,7 +337,7 @@ static int __cdecl sfFileClose(pioreq pir)
 
     if (pir->ir_flags == CLOSE_FINAL)
     {
-        SfHostClose(pFile->idRoot, pFile->hHost);
+        SfHostClose(pFile->idRoot, sfFileHost(pFile));
         SfHeapFree(pFile->ppath, 0);
         SfHeapFree(pFile, 0);
     }
@@ -343,7 +352,7 @@ static int __cdecl sfFileClose(pioreq pir)
 static int __cdecl sfFileCommit(pioreq pir)
 {
     SFFILE *pFile = (SFFILE *)pir->ir_fh;
-    int rc = SfHostFlush(pFile->idRoot, pFile->hHost);
+    int rc = SfHostFlush(pFile->idRoot, sfFileHost(pFile));
     /* A handle opened for reading only can't be flushed on some hosts; nothing to lose then. */
     pir->ir_error = rc >= 0 || rc == VERR_ACCESS_DENIED || rc == VERR_INVALID_HANDLE ? 0 : SfRcToWin32(rc);
     return pir->ir_error;
@@ -363,7 +372,7 @@ static int __cdecl sfFileLocks(pioreq pir)
         pir->ir_error = SF_ERROR_INVALID_FUNCTION;
         return pir->ir_error;
     }
-    rc = SfHostLock(pFile->idRoot, pFile->hHost, (UINT64)pir->ir_pos, (UINT64)pir->ir_locklen,
+    rc = SfHostLock(pFile->idRoot, sfFileHost(pFile), (UINT64)pir->ir_pos, (UINT64)pir->ir_locklen,
                     pir->ir_flags == LOCK_REGION ? SHFL_LOCK_EXCLUSIVE | SHFL_LOCK_NOWAIT | SHFL_LOCK_PARTIAL
                                                  : SHFL_LOCK_CANCEL);
     pir->ir_error = rc >= 0 ? 0 : SfRcToWin32(rc);
@@ -390,7 +399,7 @@ static int __cdecl sfFileTimes(pioreq pir)
             Info.AccessTime = SfDosTimeToTime(pir->ir_dostime);
         else
             Info.BirthTime = SfDosTimeToTime(pir->ir_dostime);
-        rc = SfSetInfo(pFile->idRoot, pFile->hHost, &Info);
+        rc = SfSetInfo(pFile->idRoot, sfFileHost(pFile), &Info);
         pir->ir_error = rc >= 0 ? 0 : SfRcToWin32(rc);
         return pir->ir_error;
     }

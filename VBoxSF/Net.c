@@ -227,6 +227,7 @@ int SfLookup(SFRESOURCE *pRes, path_t ppath, SHFLFSOBJINFO *pInfo)
 {
     SHFLCREATEPARMS Parms;
     SHFLSTRING *pPath = SfPathToHost(pRes, ppath, 0);
+    UINT32 uGen;
     int rc;
 
     if (!pPath)
@@ -234,6 +235,7 @@ int SfLookup(SFRESOURCE *pRes, path_t ppath, SHFLFSOBJINFO *pInfo)
     SfMemZero(&Parms, sizeof(Parms));
     Parms.Handle      = SHFL_HANDLE_NIL;
     Parms.CreateFlags = SHFL_CF_LOOKUP | SHFL_CF_ACT_FAIL_IF_NEW;
+    uGen = SfHostGeneration();
     rc = SfHostCreate(pRes->idRoot, pPath, &Parms);
     SfHeapFree(pPath, 0);
     if (rc < 0)
@@ -243,7 +245,7 @@ int SfLookup(SFRESOURCE *pRes, path_t ppath, SHFLFSOBJINFO *pInfo)
     if (Parms.Result != SHFL_FILE_EXISTS)
         return VERR_FILE_NOT_FOUND;
     if (Parms.Handle != SHFL_HANDLE_NIL)    /* Shouldn't happen with SHFL_CF_LOOKUP. */
-        SfHostClose(pRes->idRoot, Parms.Handle);
+        SfHostClose(pRes->idRoot, SfHostHandle(Parms.Handle, uGen));
     SfMemCopy(pInfo, &Parms.Info, sizeof(*pInfo));
     return VINF_SUCCESS;
 }
@@ -267,6 +269,7 @@ static int sfSetPathInfo(SFRESOURCE *pRes, path_t ppath, const SHFLFSOBJINFO *pI
 {
     SHFLCREATEPARMS Parms;
     SHFLSTRING *pPath = SfPathToHost(pRes, ppath, 0);
+    UINT32 uGen;
     int rc;
 
     if (!pPath)
@@ -274,14 +277,15 @@ static int sfSetPathInfo(SFRESOURCE *pRes, path_t ppath, const SHFLFSOBJINFO *pI
     SfMemZero(&Parms, sizeof(Parms));
     Parms.Handle      = SHFL_HANDLE_NIL;
     Parms.CreateFlags = SHFL_CF_ACT_OPEN_IF_EXISTS | SHFL_CF_ACT_FAIL_IF_NEW | SHFL_CF_ACCESS_ATTR_WRITE;
+    uGen = SfHostGeneration();
     rc = SfHostCreate(pRes->idRoot, pPath, &Parms);
     SfHeapFree(pPath, 0);
     if (rc >= 0 && Parms.Handle == SHFL_HANDLE_NIL)
         rc = Parms.Result == SHFL_PATH_NOT_FOUND ? VERR_PATH_NOT_FOUND : VERR_FILE_NOT_FOUND;
     if (rc < 0)
         return rc;
-    rc = SfSetInfo(pRes->idRoot, Parms.Handle, pInfo);
-    SfHostClose(pRes->idRoot, Parms.Handle);
+    rc = SfSetInfo(pRes->idRoot, SfHostHandle(Parms.Handle, uGen), pInfo);
+    SfHostClose(pRes->idRoot, SfHostHandle(Parms.Handle, uGen));
     return rc;
 }
 
@@ -536,6 +540,7 @@ static int __cdecl sfNetGetDiskInfo(pioreq pir)
     ULONG cbInfo = sizeof(VolInfo);
     ULONG cbSector, cSectorsPerCluster, cMaxClusters;
     UINT64 cClusters, cFree;
+    UINT32 uGen;
     int rc;
 
     SF_LOG_CALL_NO_PATH("GetDiskInfo", pir);
@@ -545,14 +550,16 @@ static int __cdecl sfNetGetDiskInfo(pioreq pir)
     SfMemZero(&Parms, sizeof(Parms));
     Parms.Handle      = SHFL_HANDLE_NIL;
     Parms.CreateFlags = SHFL_CF_DIRECTORY | SHFL_CF_ACT_OPEN_IF_EXISTS | SHFL_CF_ACT_FAIL_IF_NEW | SHFL_CF_ACCESS_READ;
+    uGen = SfHostGeneration();
     rc = SfHostCreate(pRes->idRoot, (SHFLSTRING *)&Root, &Parms);
     if (rc >= 0 && Parms.Handle == SHFL_HANDLE_NIL)
         rc = VERR_PATH_NOT_FOUND;
     if (rc >= 0)
     {
         SfMemZero(&VolInfo, sizeof(VolInfo));
-        rc = SfHostInformation(pRes->idRoot, Parms.Handle, SHFL_INFO_GET | SHFL_INFO_VOLUME, &VolInfo, &cbInfo);
-        SfHostClose(pRes->idRoot, Parms.Handle);
+        rc = SfHostInformation(pRes->idRoot, SfHostHandle(Parms.Handle, uGen), SHFL_INFO_GET | SHFL_INFO_VOLUME,
+                               &VolInfo, &cbInfo);
+        SfHostClose(pRes->idRoot, SfHostHandle(Parms.Handle, uGen));
     }
     if (rc < 0)
     {
@@ -711,6 +718,7 @@ static int __cdecl sfNetDir(pioreq pir)
         {
             SHFLCREATEPARMS Parms;
             SHFLSTRING *pPath = SfPathToHostKeepCase(pRes, pir->ir_ppath, pir->ir_attr, pir->ir_uFName);
+            UINT32 uGen;
             if (!pPath)
             {
                 pir->ir_error = SF_ERROR_NOT_ENOUGH_MEMORY;
@@ -720,13 +728,14 @@ static int __cdecl sfNetDir(pioreq pir)
             Parms.Handle      = SHFL_HANDLE_NIL;
             Parms.CreateFlags = SHFL_CF_DIRECTORY | SHFL_CF_ACT_FAIL_IF_EXISTS | SHFL_CF_ACT_CREATE_IF_NEW
                               | SHFL_CF_ACCESS_READ;
+            uGen = SfHostGeneration();
             rc = SfHostCreate(pRes->idRoot, pPath, &Parms);
             SfHeapFree(pPath, 0);
             if (rc >= 0 && Parms.Handle == SHFL_HANDLE_NIL)
                 rc = Parms.Result == SHFL_FILE_EXISTS ? VERR_ALREADY_EXISTS
                    : Parms.Result == SHFL_PATH_NOT_FOUND ? VERR_PATH_NOT_FOUND : VERR_ACCESS_DENIED;
             if (rc >= 0)
-                SfHostClose(pRes->idRoot, Parms.Handle);
+                SfHostClose(pRes->idRoot, SfHostHandle(Parms.Handle, uGen));
             /* DOS answers "access denied" when the name exists already. */
             pir->ir_error = rc >= 0 ? 0 : rc == VERR_ALREADY_EXISTS ? SF_ERROR_ACCESS_DENIED : SfRcToWin32(rc);
             return pir->ir_error;

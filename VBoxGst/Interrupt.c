@@ -12,6 +12,11 @@
 
 #include "VBoxGst.h"
 
+/** Restores from a saved state seen since the driver loaded
+ *  (IOCTL_VBOXGUEST98_INTERNAL_GET_RESTORES).  A global, not in the device
+ *  extension, so that it outlives a stop of the device. */
+UINT32 volatile g_cVGDrvRestores;
+
 /**
  * ISR handler.
  *
@@ -46,6 +51,11 @@ BOOLEAN NTAPI vgdrvWinIsrHandler(PKINTERRUPT pInterrupt, PVOID pvContext)
         pReq->events    = 0;
         fEvents = RT_SUCCESS(VbglR0GRPerform(&pReq->header)) ? pReq->events : 0;
     }
+
+    /* Counted here rather than in the DPC: VBoxSF must see it before it
+       sends anything with a handle from before the restore. */
+    if (fEvents & VMMDEV_EVENT_RESTORED)
+        vgdrvAtomicIncU32(&g_cVGDrvRestores);
 
     if (fEvents)
     {

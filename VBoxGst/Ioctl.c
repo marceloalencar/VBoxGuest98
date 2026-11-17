@@ -335,6 +335,17 @@ NTSTATUS NTAPI vgdrvWinInternalIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
             }
             break;
 
+        case IOCTL_VBOXGUEST98_INTERNAL_GET_RESTORES:
+            if (!pvBuf || pStack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(VBOXGUEST98RESTORES))
+                rcNt = STATUS_INVALID_PARAMETER;
+            else
+            {
+                ((VBOXGUEST98RESTORES *)pvBuf)->pcRestores = &g_cVGDrvRestores;
+                cbRet = sizeof(VBOXGUEST98RESTORES);
+                rcNt = STATUS_SUCCESS;
+            }
+            break;
+
         default:
             rcNt = STATUS_INVALID_DEVICE_REQUEST;
             break;

@@ -40,6 +40,9 @@ typedef struct SFFIND
 {
     SHFLROOT    idRoot;
     SHFLHANDLE  hDir;
+    /** SfHostGeneration() from before hDir was opened: after a restore of the
+     *  VM the search ends (SfHostHandle). */
+    UINT32      uGen;
     /** Search and must-match attributes (ir_attr of the first call). */
     ULONG       fAttr;
     /** Leave out "." and ".." (the share's root). */
@@ -140,6 +143,7 @@ static int sfFindStart(SFFIND *pFind, SFRESOURCE *pRes, path_t ppath, ULONG fAtt
     SfMemZero(&Parms, sizeof(Parms));
     Parms.Handle      = SHFL_HANDLE_NIL;
     Parms.CreateFlags = SHFL_CF_DIRECTORY | SHFL_CF_ACT_OPEN_IF_EXISTS | SHFL_CF_ACT_FAIL_IF_NEW | SHFL_CF_ACCESS_READ;
+    pFind->uGen = SfHostGeneration();
     rc = SfHostCreate(pFind->idRoot, pDir, &Parms);
     SfHeapFree(pDir, 0);
     if (rc >= 0 && Parms.Handle == SHFL_HANDLE_NIL)
@@ -157,7 +161,7 @@ static int sfFindStart(SFFIND *pFind, SFRESOURCE *pRes, path_t ppath, ULONG fAtt
 static void sfFindEnd(SFFIND *pFind)
 {
     if (pFind->hDir != SHFL_HANDLE_NIL)
-        SfHostClose(pFind->idRoot, pFind->hDir);
+        SfHostClose(pFind->idRoot, SfHostHandle(pFind->hDir, pFind->uGen));
     pFind->hDir = SHFL_HANDLE_NIL;
     if (pFind->pbBuf)
         SfHeapFree(pFind->pbBuf, 0);
@@ -184,7 +188,7 @@ static SHFLDIRINFO *sfFindNextEntry(SFFIND *pFind)
 
             if (pFind->fEnd || !pFind->pbBuf)
                 return NULL;
-            rc = SfHostList(pFind->idRoot, pFind->hDir, SHFL_LIST_NONE, NULL, pFind->pbBuf, &cbBuf, &cEntries);
+            rc = SfHostList(pFind->idRoot, SfHostHandle(pFind->hDir, pFind->uGen), SHFL_LIST_NONE, NULL, pFind->pbBuf, &cbBuf, &cEntries);
             if (rc < 0 || !cEntries)
             {
                 pFind->fEnd = TRUE;

@@ -22,6 +22,11 @@ static HANDLE g_hDevice;
 static UINT32 g_idClient;
 /** The driver's direct HGCM call entry point, for paging I/O. */
 static VBOXGUEST98DIRECTHGCM g_Direct;
+/** Stands in for the driver's restore counter when it has none (older
+ *  VBoxGst): handles are then never seen as stale, as before. */
+static UINT32 volatile g_cRestoresNone;
+/** The driver's counter of restores from a saved state, see SfHostHandle. */
+static UINT32 volatile *g_pcRestores = &g_cRestoresNone;
 
 /** Names VBoxGst can be opened by, tried in order. */
 static WCHAR g_wszDevNameNt[]  = VBOXGUEST98_DEVICE_NAME_NT;
@@ -178,6 +183,22 @@ int SfHostConnect(BOOL fSystemContext)
             SfLogRel("no direct HGCM calls (%#x, %#x)\n", rcNt, Ios.Status);
             g_Direct.pfnCall = NULL;
         }
+    }
+
+    if (g_pcRestores == &g_cRestoresNone)
+    {
+        VBOXGUEST98RESTORES Restores;
+        SFIOSTATUSBLOCK Ios;
+        SfMemZero(&Restores, sizeof(Restores));
+        SfMemZero(&Ios, sizeof(Ios));
+        rcNt = SfNtInternalDeviceIoControl(g_hDevice, NULL, NULL, NULL, &Ios, IOCTL_VBOXGUEST98_INTERNAL_GET_RESTORES,
+                                           NULL, 0, &Restores, sizeof(Restores));
+        if (NT_SUCCESS(rcNt) && NT_SUCCESS(Ios.Status) && Restores.pcRestores)
+            g_pcRestores = Restores.pcRestores;
+        else
+            /* Older VBoxGst: files left open over a restore of the VM may
+               reach other files through the host's reused handles. */
+            SfLogRel("no restore counter (%#x, %#x)\n", rcNt, Ios.Status);
     }
 
     SfMemZero(&Connect, sizeof(Connect));
@@ -501,12 +522,41 @@ int SfHostCreate(SHFLROOT idRoot, const SHFLSTRING *pPath, SHFLCREATEPARMS *pPar
 }
 
 /**
+ * Returns the restore generation, to be read before a call that returns a
+ * host handle and kept with the handle (see SfHostHandle).
+ */
+UINT32 SfHostGeneration(void)
+{
+    return *g_pcRestores;
+}
+
+/**
+ * Returns a host handle for use, or SHFL_HANDLE_NIL if the VM was restored
+ * from a saved state since it was obtained.
+ *
+ * The host loses its handles on a restore and hands out the same values
+ * again, so a handle from before could reach a file opened after it.  The
+ * SfHostXxx functions fail SHFL_HANDLE_NIL with VERR_INVALID_HANDLE without
+ * calling the host.
+ *
+ * @param   hHost   The handle.
+ * @param   uGen    SfHostGeneration() from before the handle was obtained.
+ */
+SHFLHANDLE SfHostHandle(SHFLHANDLE hHost, UINT32 uGen)
+{
+    return uGen == *g_pcRestores ? hHost : SHFL_HANDLE_NIL;
+}
+
+/**
  * Closes a host handle (SHFL_FN_CLOSE).
  */
 int SfHostClose(SHFLROOT idRoot, SHFLHANDLE hHost)
 {
     SFHGCMMSG Msg;
-    int rc = sfMsgInit(&Msg, SHFL_FN_CLOSE, SHFL_FN_CLOSE_CPARMS, 0);
+    int rc;
+    if (hHost == SHFL_HANDLE_NIL)
+        return VERR_INVALID_HANDLE;
+    rc = sfMsgInit(&Msg, SHFL_FN_CLOSE, SHFL_FN_CLOSE_CPARMS, 0);
     if (rc < 0)
         return rc;
     sfMsgSetU32(&Msg, 0, idRoot);
@@ -527,7 +577,13 @@ int SfHostRead(SHFLROOT idRoot, SHFLHANDLE hHost, UINT64 off, void *pvBuf, ULONG
     SFHGCMMSG Msg;
     void *pvData;
     ULONG cbRead;
-    int rc = sfMsgInit(&Msg, SHFL_FN_READ, SHFL_FN_READ_CPARMS, *pcb);
+    int rc;
+    if (hHost == SHFL_HANDLE_NIL)
+    {
+        *pcb = 0;
+        return VERR_INVALID_HANDLE;
+    }
+    rc = sfMsgInit(&Msg, SHFL_FN_READ, SHFL_FN_READ_CPARMS, *pcb);
     if (rc < 0)
         return rc;
     Msg.fDirect = fPaging;
@@ -566,7 +622,14 @@ int SfHostList(SHFLROOT idRoot, SHFLHANDLE hHost, UINT32 fFlags, const SHFLSTRIN
     void *pvData;
     ULONG cbFilter = pFilter ? SF_SHFLSTRING_SIZE(pFilter) : 0;
     ULONG cbUsed;
-    int rc = sfMsgInit(&Msg, SHFL_FN_LIST, SHFL_FN_LIST_CPARMS, ((cbFilter + 7) & ~7UL) + *pcbBuf);
+    int rc;
+    if (hHost == SHFL_HANDLE_NIL)
+    {
+        *pcbBuf = 0;
+        *pcEntries = 0;
+        return VERR_INVALID_HANDLE;
+    }
+    rc = sfMsgInit(&Msg, SHFL_FN_LIST, SHFL_FN_LIST_CPARMS, ((cbFilter + 7) & ~7UL) + *pcbBuf);
     if (rc < 0)
         return rc;
     sfMsgSetU32(&Msg, 0, idRoot);
@@ -603,7 +666,13 @@ int SfHostInformation(SHFLROOT idRoot, SHFLHANDLE hHost, UINT32 fFlags, void *pv
     SFHGCMMSG Msg;
     void *pvData;
     ULONG cbUsed;
-    int rc = sfMsgInit(&Msg, SHFL_FN_INFORMATION, SHFL_FN_INFORMATION_CPARMS, *pcbInfo);
+    int rc;
+    if (hHost == SHFL_HANDLE_NIL)
+    {
+        *pcbInfo = 0;
+        return VERR_INVALID_HANDLE;
+    }
+    rc = sfMsgInit(&Msg, SHFL_FN_INFORMATION, SHFL_FN_INFORMATION_CPARMS, *pcbInfo);
     if (rc < 0)
         return rc;
     sfMsgSetU32(&Msg, 0, idRoot);
@@ -635,7 +704,13 @@ int SfHostWrite(SHFLROOT idRoot, SHFLHANDLE hHost, UINT64 off, const void *pvBuf
 {
     SFHGCMMSG Msg;
     ULONG cbWritten;
-    int rc = sfMsgInit(&Msg, SHFL_FN_WRITE, SHFL_FN_WRITE_CPARMS, *pcb);
+    int rc;
+    if (hHost == SHFL_HANDLE_NIL)
+    {
+        *pcb = 0;
+        return VERR_INVALID_HANDLE;
+    }
+    rc = sfMsgInit(&Msg, SHFL_FN_WRITE, SHFL_FN_WRITE_CPARMS, *pcb);
     if (rc < 0)
         return rc;
     Msg.fDirect = fPaging;
@@ -657,7 +732,10 @@ int SfHostWrite(SHFLROOT idRoot, SHFLHANDLE hHost, UINT64 off, const void *pvBuf
 int SfHostSetFileSize(SHFLROOT idRoot, SHFLHANDLE hHost, UINT64 cbNew)
 {
     SFHGCMMSG Msg;
-    int rc = sfMsgInit(&Msg, SHFL_FN_SET_FILE_SIZE, SHFL_FN_SET_FILE_SIZE_CPARMS, 0);
+    int rc;
+    if (hHost == SHFL_HANDLE_NIL)
+        return VERR_INVALID_HANDLE;
+    rc = sfMsgInit(&Msg, SHFL_FN_SET_FILE_SIZE, SHFL_FN_SET_FILE_SIZE_CPARMS, 0);
     if (rc < 0)
         return rc;
     sfMsgSetU32(&Msg, 0, idRoot);
@@ -674,7 +752,10 @@ int SfHostSetFileSize(SHFLROOT idRoot, SHFLHANDLE hHost, UINT64 cbNew)
 int SfHostFlush(SHFLROOT idRoot, SHFLHANDLE hHost)
 {
     SFHGCMMSG Msg;
-    int rc = sfMsgInit(&Msg, SHFL_FN_FLUSH, SHFL_FN_FLUSH_CPARMS, 0);
+    int rc;
+    if (hHost == SHFL_HANDLE_NIL)
+        return VERR_INVALID_HANDLE;
+    rc = sfMsgInit(&Msg, SHFL_FN_FLUSH, SHFL_FN_FLUSH_CPARMS, 0);
     if (rc < 0)
         return rc;
     sfMsgSetU32(&Msg, 0, idRoot);
@@ -711,7 +792,10 @@ int SfHostRemove(SHFLROOT idRoot, const SHFLSTRING *pPath, UINT32 fFlags)
 int SfHostLock(SHFLROOT idRoot, SHFLHANDLE hHost, UINT64 off, UINT64 cb, UINT32 fFlags)
 {
     SFHGCMMSG Msg;
-    int rc = sfMsgInit(&Msg, SHFL_FN_LOCK, SHFL_FN_LOCK_CPARMS, 0);
+    int rc;
+    if (hHost == SHFL_HANDLE_NIL)
+        return VERR_INVALID_HANDLE;
+    rc = sfMsgInit(&Msg, SHFL_FN_LOCK, SHFL_FN_LOCK_CPARMS, 0);
     if (rc < 0)
         return rc;
     sfMsgSetU32(&Msg, 0, idRoot);

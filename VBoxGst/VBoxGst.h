@@ -272,6 +272,7 @@ NTSTATUS NTAPI  vgdrvWinPnP(PDEVICE_OBJECT pDevObj, PIRP pIrp);
 NTSTATUS NTAPI  vgdrvWinPower(PDEVICE_OBJECT pDevObj, PIRP pIrp);
 BOOLEAN  NTAPI  vgdrvWinIsrHandler(PKINTERRUPT pInterrupt, PVOID pvContext);
 VOID     NTAPI  vgdrvWinDpcHandler(PKDPC pDpc, PDEVICE_OBJECT pDevObj, PIRP pIrp, PVOID pvContext);
+extern UINT32 volatile g_cVGDrvRestores;
 NTSTATUS NTAPI  vgdrvWinIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp);
 NTSTATUS NTAPI  vgdrvWinInternalIoCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp);
 NTSTATUS        vgdrvWinCompleteRequest(PIRP pIrp, NTSTATUS rcNt, ULONG_PTR cbInfo);
@@ -317,6 +318,16 @@ __forceinline void vgdrvAtomicOrU32(UINT32 volatile *pu32, UINT32 fBits)
         mov     ecx, [pu32]
         mov     eax, [fBits]
         lock or [ecx], eax
+    }
+}
+
+/** Atomically increments *pu32.  Safe at any IRQL including in the ISR. */
+__forceinline void vgdrvAtomicIncU32(UINT32 volatile *pu32)
+{
+    __asm
+    {
+        mov     ecx, [pu32]
+        lock inc dword ptr [ecx]
     }
 }
 

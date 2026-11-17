@@ -10,8 +10,9 @@
 *********************************************************************************************************************************/
 
 /** Events the driver always wants: mouse position changes are forwarded to
- *  the mouse filter, HGCM completions wake up the HGCM callers. */
-#define VGDRV_FIXED_EVENTS  (VMMDEV_EVENT_MOUSE_POSITION_CHANGED | VMMDEV_EVENT_HGCM)
+ *  the mouse filter, HGCM completions wake up the HGCM callers, restores are
+ *  counted for VBoxSF (g_cVGDrvRestores). */
+#define VGDRV_FIXED_EVENTS  (VMMDEV_EVENT_MOUSE_POSITION_CHANGED | VMMDEV_EVENT_HGCM | VMMDEV_EVENT_RESTORED)
 
 
 /**

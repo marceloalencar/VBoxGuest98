@@ -196,6 +196,8 @@ void    SfHostLogMappings(void);
 int     SfHostQueryNames(WCHAR *pwszBuf, ULONG cwcBuf, ULONG *pcwcRet);
 int     SfHostMapFolder(const WCHAR *pwszName, ULONG cwcName, SHFLROOT *pidRoot);
 int     SfHostUnmapFolder(SHFLROOT idRoot);
+UINT32  SfHostGeneration(void);
+SHFLHANDLE SfHostHandle(SHFLHANDLE hHost, UINT32 uGen);
 int     SfHostCreate(SHFLROOT idRoot, const SHFLSTRING *pPath, SHFLCREATEPARMS *pParms);
 int     SfHostClose(SHFLROOT idRoot, SHFLHANDLE hHost);
 int     SfHostRead(SHFLROOT idRoot, SHFLHANDLE hHost, UINT64 off, void *pvBuf, ULONG *pcb, BOOL fPaging);
